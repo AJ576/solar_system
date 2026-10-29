@@ -1,5 +1,106 @@
+* {
+  box-sizing: border-box;
+}
+
 body {
-    margin: 0;
-    overflow: hidden;
-  }
-  
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #03060c;
+  color: #e0f0ff;
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+canvas.threejs {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  z-index: 1;
+  outline: none;
+}
+
+#hud-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Common Sci-Fi HUD utility classes */
+.hud-interactive {
+  pointer-events: auto !important;
+}
+
+/* Glassmorphism Panel */
+.sci-panel {
+  background: rgba(8, 16, 28, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 220, 255, 0.28);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), inset 0 0 12px rgba(0, 200, 255, 0.08);
+  border-radius: 4px;
+}
+
+/* Neon Glow Accents */
+.neon-cyan {
+  color: #00e5ff;
+  text-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+}
+
+.neon-orange {
+  color: #ff9d00;
+  text-shadow: 0 0 8px rgba(255, 157, 0, 0.6);
+}
+
+.neon-green {
+  color: #00ff88;
+  text-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
+}
+
+/* Sci-fi buttons */
+.sci-btn {
+  background: rgba(0, 200, 255, 0.15);
+  border: 1px solid #00e5ff;
+  color: #e0f8ff;
+  padding: 6px 14px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 13px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 2px;
+}
+
+.sci-btn:hover {
+  background: rgba(0, 229, 255, 0.35);
+  box-shadow: 0 0 12px rgba(0, 229, 255, 0.5);
+}
+
+.sci-btn:active {
+  transform: scale(0.97);
+}
+
+/* Sci-fi Inputs */
+.sci-input {
+  background: rgba(0, 30, 50, 0.6);
+  border: 1px solid rgba(0, 200, 255, 0.4);
+  color: #00e5ff;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 13px;
+  padding: 6px 10px;
+  outline: none;
+  border-radius: 2px;
+}
+
+.sci-input:focus {
+  border-color: #00e5ff;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+}
