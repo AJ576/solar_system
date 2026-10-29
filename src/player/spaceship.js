@@ -33,10 +33,10 @@ export function createSpaceship() {
   });
 
   const hullAccentMat = new THREE.MeshStandardMaterial({
-    color: 0x00d4ff,
+    color: 0x9aa6b8,
     metalness: 0.8,
     roughness: 0.2,
-    emissive: 0x006688,
+    emissive: 0x000000,
     emissiveIntensity: 0.5,
   });
 
@@ -62,7 +62,7 @@ export function createSpaceship() {
   });
 
   const engineInteriorMat = new THREE.MeshBasicMaterial({
-    color: 0x00e5ff,
+    color: 0xc9d8ff,
   });
 
   const navLeftMat = new THREE.MeshBasicMaterial({
@@ -73,23 +73,53 @@ export function createSpaceship() {
     color: 0x00e676, // Aviation Starboard Green
   });
 
-  const flareOuterMat = new THREE.MeshBasicMaterial({
-    color: 0x00d4ff,
-    transparent: true,
-    opacity: 0.85,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
+  // Exhaust plume: additive, fades from the nozzle to the tip and toward its silhouette
+  function createFlareMaterial(color) {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(color) },
+        uOpacity: { value: 0.8 },
+      },
+      vertexShader: /* glsl */`
+        #include <common>
+        #include <logdepthbuf_pars_vertex>
+        varying float vAlong;
+        varying vec3 vNormalView;
+        varying vec3 vViewDir;
+        void main() {
+          vAlong = uv.y;
+          vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+          vNormalView = normalize(normalMatrix * normal);
+          vViewDir = normalize(-mvPos.xyz);
+          gl_Position = projectionMatrix * mvPos;
+          #include <logdepthbuf_vertex>
+        }
+      `,
+      fragmentShader: /* glsl */`
+        #include <common>
+        #include <logdepthbuf_pars_fragment>
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        varying float vAlong;
+        varying vec3 vNormalView;
+        varying vec3 vViewDir;
+        void main() {
+          #include <logdepthbuf_fragment>
+          float lengthFade = pow(1.0 - clamp(vAlong, 0.0, 1.0), 1.6);
+          float edgeFade = pow(abs(dot(normalize(vNormalView), normalize(vViewDir))), 1.5);
+          float a = lengthFade * edgeFade * uOpacity;
+          gl_FragColor = vec4(uColor * a, 1.0);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+  }
 
-  const flareInnerMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    transparent: true,
-    opacity: 0.95,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
+  const flareOuterMat = createFlareMaterial(0x6f9dff);
+  const flareInnerMat = createFlareMaterial(0xdfe9ff);
 
   // --- Fuselage: Center Cabin & Hull Plates ---
   // Main chassis box
@@ -211,7 +241,7 @@ export function createSpaceship() {
   leftWing.position.y = -0.02;
   shipGroup.add(leftWing);
 
-  // Wing accent stripes (cyan racing stripes)
+  // Wing accent stripes
   const rightStripeGeom = new THREE.BoxGeometry(0.12, 0.02, 1.4);
   const rightStripe = new THREE.Mesh(rightStripeGeom, hullAccentMat);
   rightStripe.position.set(1.45, 0.04, 0.1);
@@ -260,7 +290,7 @@ export function createSpaceship() {
   navLeftMesh.position.set(-2.62, 0.24, 0.88);
   shipGroup.add(navLeftMesh);
 
-  const navLeftLight = new THREE.PointLight(0xff1744, 0.8, 1.8);
+  const navLeftLight = new THREE.PointLight(0xff1744, 0.12, 1.2);
   navLeftLight.position.set(-2.66, 0.24, 0.88);
   shipGroup.add(navLeftLight);
 
@@ -270,7 +300,7 @@ export function createSpaceship() {
   navRightMesh.position.set(2.62, 0.24, 0.88);
   shipGroup.add(navRightMesh);
 
-  const navRightLight = new THREE.PointLight(0x00e676, 0.8, 1.8);
+  const navRightLight = new THREE.PointLight(0x00e676, 0.12, 1.2);
   navRightLight.position.set(2.66, 0.24, 0.88);
   shipGroup.add(navRightLight);
 
@@ -350,7 +380,7 @@ export function createSpaceship() {
   shipGroup.add(rightFlareInner);
 
   // Thruster PointLight: dynamic cyan/blue glow centered between engines
-  const thrusterLight = new THREE.PointLight(0x00d4ff, 1.8, 6.0);
+  const thrusterLight = new THREE.PointLight(0x8fb4ff, 1.8, 6.0);
   thrusterLight.position.set(0, 0.02, engineZ + 0.9);
   shipGroup.add(thrusterLight);
 
@@ -361,51 +391,42 @@ export function createSpaceship() {
    * Scales flame cones & light intensity based on throttle 0..1 (or >1 when boosting).
    * @param {number} throttle 0 (idle) to 1.0 (cruise), or 2.5 (afterburner boost)
    */
+  const _boostOuter = new THREE.Color(0xa9c4ff);
+  const _boostInner = new THREE.Color(0xffffff);
+
   function setThrusterIntensity(throttle) {
     const t = Math.max(0.04, Number(throttle) || 0);
 
     // Dynamic scale along thrust axis (+Z) and girth (X/Y)
-    const zScale = 0.25 + t * 1.35;
+    const zScale = 0.25 + t * 1.0;
     const xyScale = 0.65 + Math.min(t, 2.0) * 0.35;
 
     leftFlareOuter.scale.set(xyScale, xyScale, zScale);
     rightFlareOuter.scale.set(xyScale, xyScale, zScale);
 
-    const innerZScale = 0.2 + t * 1.15;
+    const innerZScale = 0.2 + t * 0.85;
     const innerXYScale = 0.55 + Math.min(t, 2.0) * 0.3;
 
     leftFlareInner.scale.set(innerXYScale, innerXYScale, innerZScale);
     rightFlareInner.scale.set(innerXYScale, innerXYScale, innerZScale);
 
     // Dynamic opacity & colors
-    const outerOpacity = Math.min(1.0, 0.25 + t * 0.55);
-    const innerOpacity = Math.min(1.0, 0.35 + t * 0.6);
+    const boost = THREE.MathUtils.clamp((t - 1.2) / 1.0, 0, 1);
+    const outerOpacity = Math.min(1.0, 0.2 + t * 0.35);
+    const innerOpacity = Math.min(1.0, 0.3 + t * 0.4);
 
-    leftFlareOuter.material.opacity = outerOpacity;
-    rightFlareOuter.material.opacity = outerOpacity;
-    leftFlareInner.material.opacity = innerOpacity;
-    rightFlareInner.material.opacity = innerOpacity;
-
-    // Afterburner heat shift
-    if (t > 1.2) {
-      // Hyperdrive / Afterburner boost: intense white-cyan plasma
-      leftFlareOuter.material.color.setHex(0x55eeff);
-      rightFlareOuter.material.color.setHex(0x55eeff);
-      leftFlareInner.material.color.setHex(0xffffff);
-      rightFlareInner.material.color.setHex(0xffffff);
-      thrusterLight.color.setHex(0x66f0ff);
-      thrusterLight.intensity = 1.0 + t * 2.5;
-      thrusterLight.distance = (14 + t * 8) * 0.5;
-    } else {
-      // Normal cruise / idle
-      leftFlareOuter.material.color.setHex(0x00d4ff);
-      rightFlareOuter.material.color.setHex(0x00d4ff);
-      leftFlareInner.material.color.setHex(0xbbf0ff);
-      rightFlareInner.material.color.setHex(0xbbf0ff);
-      thrusterLight.color.setHex(0x00d4ff);
-      thrusterLight.intensity = 0.6 + t * 1.8;
-      thrusterLight.distance = (10 + t * 5) * 0.5;
+    for (const flare of [leftFlareOuter, rightFlareOuter]) {
+      flare.material.uniforms.uOpacity.value = outerOpacity;
+      flare.material.uniforms.uColor.value.setHex(0x6f9dff).lerp(_boostOuter, boost);
     }
+    for (const flare of [leftFlareInner, rightFlareInner]) {
+      flare.material.uniforms.uOpacity.value = innerOpacity;
+      flare.material.uniforms.uColor.value.setHex(0xdfe9ff).lerp(_boostInner, boost);
+    }
+
+    thrusterLight.color.setHex(0x8fb4ff);
+    thrusterLight.intensity = 0.6 + t * 1.6;
+    thrusterLight.distance = (10 + t * 6) * 0.5;
   }
 
   // Set initial idle glow

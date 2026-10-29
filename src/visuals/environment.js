@@ -293,6 +293,15 @@ export function createEnvironment(scene) {
   nebula.name = 'DeepSpaceNebula';
   envGroup.add(nebula);
 
+  // The backdrop was authored at ~60,000 u. Push it out beyond the planetary system
+  // (which spans a few hundred thousand units) so it never draws over distant planets,
+  // scaling point sizes to match so it looks the same.
+  const ENV_SCALE = 25;
+  envGroup.scale.setScalar(ENV_SCALE);
+  envGroup.traverse((child) => {
+    if (child.isPoints && child.material) child.material.size *= ENV_SCALE;
+  });
+
   if (scene) {
     scene.add(envGroup);
   }
@@ -301,7 +310,7 @@ export function createEnvironment(scene) {
   // 5. Cinematic Space Ambient Light (Calibrated High Contrast)
   // -------------------------------------------------------------
   // Ambient is kept very subtle (0.10) so star shadow terminators remain crisp & dramatic
-  const ambientLight = new THREE.AmbientLight(0x0a0e18, 0.10);
+  const ambientLight = new THREE.AmbientLight(0x2a3346, 0.35);
   ambientLight.name = 'SpaceAmbientLight';
   if (scene) scene.add(ambientLight);
 

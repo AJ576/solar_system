@@ -129,50 +129,47 @@ export function getPlanetVelocity(planetData, totalTime, target = new THREE.Vect
 }
 
 /**
- * Computes the relative 3D position vector of a moon with respect to its parent planet.
+ * Computes the position of a moon relative to its parent planet: a circular orbit
+ * tilted by the moon's inclination about the X axis.
  *
- * @param {Object} moonData Moon orbital parameters (distance, orbitalSpeed, startAngle)
+ * @param {Object} moonData Moon orbital parameters (distance, orbitalSpeed, startAngle, inclination)
  * @param {number} totalTime Total elapsed simulation time in seconds
  * @param {THREE.Vector3} [target] Optional target vector to store result into
- * @returns {THREE.Vector3} Relative position offset (dx, dy, dz)
+ * @returns {THREE.Vector3} Relative position offset
  */
 export function getMoonRelativePosition(moonData, totalTime, target = new THREE.Vector3()) {
-  const dMoon = moonData.distance ?? moonData.d_moon ?? moonData.dMoon ?? 2.5;
-  const omegaMoon = moonData.orbitalSpeed ?? moonData.speed ?? moonData.omega_moon ?? moonData.omegaMoon ?? 0.05;
-  const theta0 = moonData.startAngle ?? moonData.theta0 ?? moonData.theta_0 ?? moonData.startingAngle ?? 0;
+  const dMoon = moonData.distance ?? 2.5;
+  const omegaMoon = moonData.orbitalSpeed ?? moonData.speed ?? 0.01;
+  const theta0 = moonData.startAngle ?? 0;
+  const inc = moonData.inclination ?? 0;
 
   const theta = theta0 + omegaMoon * totalTime;
-  const dx = Math.cos(theta) * dMoon;
-  const dz = Math.sin(theta) * dMoon;
-  const dy = Math.sin(theta * 1.5) * (dMoon * 0.15); // Slight realistic orbital tilt
+  const x = Math.cos(theta) * dMoon;
+  const zFlat = Math.sin(theta) * dMoon;
 
-  target.set(dx, dy, dz);
+  target.set(x, zFlat * Math.sin(inc), zFlat * Math.cos(inc));
   return target;
 }
 
 /**
  * Computes the world 3D position vector of a moon given the parent planet's position.
- *
- * @param {Object} moonData Moon orbital parameters
- * @param {THREE.Vector3|Object} planetPosition World position of the parent planet
- * @param {number} totalTime Total elapsed simulation time in seconds
- * @param {THREE.Vector3} [target] Optional target vector to store result into
- * @returns {THREE.Vector3} Absolute world position vector
  */
 export function getMoonPosition(moonData, planetPosition, totalTime, target = new THREE.Vector3()) {
-  const rel = getMoonRelativePosition(moonData, totalTime);
-  target.set(
-    planetPosition.x + rel.x,
-    planetPosition.y + rel.y,
-    planetPosition.z + rel.z
-  );
+  getMoonRelativePosition(moonData, totalTime, target);
+  target.x += planetPosition.x;
+  target.y += planetPosition.y;
+  target.z += planetPosition.z;
   return target;
 }
 
 /**
- * Updates all orbital motions, planet positions, axial rotations, and moons in the solar system.
+ * Advances every body in the system to time `totalTime`.
  *
- * @param {Object|Array} systemMeshes Mesh structure containing planetEntries / planets / starMesh
+ * Planet entries (from buildSolarSystemMeshes) carry a non-rotating `group` that
+ * follows the orbit, and a `mesh` that spins on its axis inside it. Moons are
+ * children of the group, so they orbit the planet without inheriting its spin.
+ *
+ * @param {Object} systemMeshes Mesh structure from buildSolarSystemMeshes
  * @param {Object} systemData Procedural solar system configuration data
  * @param {number} deltaTime Frame time delta in seconds
  * @param {number} totalTime Total elapsed simulation time in seconds
@@ -183,107 +180,39 @@ export function updateOrbits(systemMeshes, systemData, deltaTime, totalTime) {
   const dt = typeof deltaTime === 'number' ? deltaTime : 0.016;
   const t = typeof totalTime === 'number' ? totalTime : 0;
 
-  // 1. Star gentle axial rotation if starMesh exists
-  const starMesh = systemMeshes.starMesh || systemMeshes.star;
-  if (starMesh && starMesh.rotation) {
-    starMesh.rotation.y += 0.002 * dt;
+  if (systemMeshes.starMesh) {
+    systemMeshes.starMesh.rotation.y += 0.004 * dt;
   }
 
-  // 2. Identify planet entries list
-  const entries = systemMeshes.planetEntries || systemMeshes.planets || systemMeshes.planetMeshes || (Array.isArray(systemMeshes) ? systemMeshes : []);
+  const entries = systemMeshes.planetEntries || [];
   const planetDataList = systemData?.planets || [];
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     if (!entry) continue;
 
-    // Resolve planet mesh and planet data
-    const planetMesh = entry.isMesh ? entry : (entry.mesh || entry.planetMesh || entry);
-    if (!planetMesh || !planetMesh.position) continue;
+    const planetData = entry.data || planetDataList[i];
+    const frame = entry.group || entry.mesh;
+    if (!planetData || !frame) continue;
 
-    const planetData = entry.data || planetDataList[i] || planetMesh.userData || {};
+    getPlanetPosition(planetData, t, frame.position);
 
-    // Compute updated Keplerian position
-    const pos = getPlanetPosition(planetData, t);
-    planetMesh.position.copy(pos);
+    const rotSpeed = planetData.rotationSpeed ?? 0.01;
+    if (entry.mesh) entry.mesh.rotation.y += rotSpeed * dt;
+    if (entry.cloudMesh) entry.cloudMesh.rotation.y += rotSpeed * 1.15 * dt;
 
-    // Compute and cache orbital velocity vector on mesh userData
-    const vel = getPlanetVelocity(planetData, t);
-    if (!planetMesh.userData) planetMesh.userData = {};
-    planetMesh.userData.velocity = vel;
-    planetMesh.userData.currentPosition = pos;
+    const moonEntries = entry.moons || [];
+    for (let m = 0; m < moonEntries.length; m++) {
+      const moonEntry = moonEntries[m];
+      if (!moonEntry?.mesh) continue;
+      const moonData = moonEntry.data || planetData.moons?.[m] || {};
 
-    // Update planet axial rotation
-    const rotSpeed = planetData.axialRotationSpeed ?? planetData.rotationSpeed ?? planetData.rotation ?? 0.01;
-    planetMesh.rotation.y += rotSpeed * dt;
-
-    // Differential cloud rotation for oceanic/terrestrial worlds
-    if (planetMesh.userData && planetMesh.userData.cloudMesh) {
-      planetMesh.userData.cloudMesh.rotation.y += rotSpeed * 1.35 * dt;
-    }
-
-    // 3. Update Moons
-    const moonsData = planetData.moons || [];
-    const moonEntries = entry.moons || entry.moonMeshes || planetMesh.userData.moons || planetMesh.userData.moonMeshes || (systemMeshes.moons && systemMeshes.moons[i]);
-
-    if (moonEntries && Array.isArray(moonEntries)) {
-      for (let m = 0; m < moonEntries.length; m++) {
-        const moonEntry = moonEntries[m];
-        if (!moonEntry) continue;
-
-        const moonMesh = moonEntry.isMesh ? moonEntry : (moonEntry.mesh || moonEntry.moonMesh || moonEntry);
-        if (!moonMesh || !moonMesh.position) continue;
-
-        const moonData = moonEntry.data || moonsData[m] || moonMesh.userData || {};
-
-        const dMoon = moonData.distance ?? moonData.d_moon ?? moonData.dMoon ?? 2.5;
-        const omegaMoon = moonData.orbitalSpeed ?? moonData.speed ?? moonData.omega_moon ?? moonData.omegaMoon ?? 0.05;
-        const theta0 = moonData.startAngle ?? moonData.theta0 ?? moonData.theta_0 ?? moonData.startingAngle ?? 0;
-
-        const theta = theta0 + omegaMoon * t;
-        const dx = Math.cos(theta) * dMoon;
-        const dz = Math.sin(theta) * dMoon;
-        const dy = Math.sin(theta * 1.5) * (dMoon * 0.15);
-
-        // Position moon correctly based on parent hierarchy
-        if (moonMesh.parent === planetMesh) {
-          moonMesh.position.set(dx, dy, dz);
-        } else {
-          moonMesh.position.set(pos.x + dx, pos.y + dy, pos.z + dz);
-        }
-
-        // Moon axial rotation
-        const moonRotSpeed = moonData.rotationSpeed ?? moonData.rotation ?? (omegaMoon * 0.5);
-        moonMesh.rotation.y += moonRotSpeed * dt;
-
-        // Cache moon velocity telemetry
-        if (!moonMesh.userData) moonMesh.userData = {};
-        const vrelX = -Math.sin(theta) * dMoon * omegaMoon;
-        const vrelZ = Math.cos(theta) * dMoon * omegaMoon;
-        const vrelY = 1.5 * Math.cos(theta * 1.5) * (dMoon * 0.15) * omegaMoon;
-        moonMesh.userData.velocity = new THREE.Vector3(vel.x + vrelX, vel.y + vrelY, vel.z + vrelZ);
+      if (moonEntry.mesh.parent === frame) {
+        getMoonRelativePosition(moonData, t, moonEntry.mesh.position);
+      } else {
+        getMoonPosition(moonData, frame.position, t, moonEntry.mesh.position);
       }
-    } else if (planetMesh.children && planetMesh.children.length > 0) {
-      // Fallback: check planetMesh.children for moons
-      let mIndex = 0;
-      for (let c = 0; c < planetMesh.children.length; c++) {
-        const child = planetMesh.children[c];
-        if (child.isMesh && (child.name?.startsWith('Moon') || moonsData[mIndex])) {
-          const moonData = moonsData[mIndex] || child.userData || {};
-          const dMoon = moonData.distance ?? 2.5;
-          const omegaMoon = moonData.orbitalSpeed ?? moonData.speed ?? 0.05;
-          const theta0 = moonData.startAngle ?? 0;
-
-          const theta = theta0 + omegaMoon * t;
-          const dx = Math.cos(theta) * dMoon;
-          const dz = Math.sin(theta) * dMoon;
-          const dy = Math.sin(theta * 1.5) * (dMoon * 0.15);
-
-          child.position.set(dx, dy, dz);
-          child.rotation.y += (moonData.rotationSpeed ?? 0.02) * dt;
-          mIndex++;
-        }
-      }
+      moonEntry.mesh.rotation.y += (moonData.rotationSpeed ?? 0.01) * dt;
     }
   }
 }

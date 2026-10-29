@@ -311,10 +311,10 @@ export class HyperspaceManager {
 
     this.streakData = [];
     const colorPalette = [
-      new THREE.Color(0x00e5ff), // Electric Cyan
+      new THREE.Color(0xdfe6f2), // Cool white
       new THREE.Color(0xffffff), // Radiant White
-      new THREE.Color(0x3388ff), // Neon Blue
-      new THREE.Color(0x9d00ff)  // Violet Edge
+      new THREE.Color(0xb9c6dc), // Pale steel
+      new THREE.Color(0xf2e4cf)  // Warm white
     ];
 
     for (let i = 0; i < this.streakCount; i++) {
@@ -377,7 +377,7 @@ export class HyperspaceManager {
     const tunnelGeo = new THREE.CylinderGeometry(55, 55, 700, 24, 1, true);
     tunnelGeo.rotateX(Math.PI / 2);
     this.tunnelMaterial = new THREE.MeshBasicMaterial({
-      color: 0x00c8ff,
+      color: 0x9fb0c8,
       wireframe: true,
       transparent: true,
       opacity: 0,
@@ -414,7 +414,7 @@ export class HyperspaceManager {
       overlay.style.pointerEvents = 'none';
       overlay.style.zIndex = '9999';
       overlay.style.opacity = '0';
-      overlay.style.background = 'radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 1) 0%, rgba(0, 235, 255, 0.9) 35%, rgba(0, 60, 160, 0.75) 70%, rgba(2, 6, 18, 0.95) 100%)';
+      overlay.style.background = 'radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 1) 0%, rgba(232, 236, 244, 0.85) 30%, rgba(40, 46, 60, 0.7) 70%, rgba(4, 5, 8, 0.95) 100%)';
       overlay.style.transition = 'opacity 0.06s linear';
       overlay.style.display = 'none';
 
@@ -435,13 +435,8 @@ export class HyperspaceManager {
    * @param {number} deltaTime
    */
   update(deltaTime) {
-    // 1. Remove previous camera shake offset to prevent frame-by-frame drift
-    if (this.lastShakeOffset.lengthSq() > 0) {
-      if (this.camera?.position?.sub) {
-        this.camera.position.sub(this.lastShakeOffset);
-      }
-      this.lastShakeOffset.set(0, 0, 0);
-    }
+    // 1. The flight controls re-place the camera every frame, so last frame's shake is already gone
+    this.lastShakeOffset.set(0, 0, 0);
 
     // 2. Idle State Check
     if (this.state === HyperspaceState.IDLE) {
@@ -666,7 +661,7 @@ export class HyperspaceManager {
 
   /**
    * Executes solar system disposal, generation, mesh construction,
-   * safe player repositioning, and invokes change callback.
+   * and invokes the change callback (which places the player).
    * @private
    */
   performSystemTransition() {
@@ -695,23 +690,7 @@ export class HyperspaceManager {
       // 3. Build new system meshes and add to scene
       const newSystemMeshes = buildSolarSystemMeshes(newSystemData, this.scene);
 
-      // 4. Reposition player safely in the new system:
-      // entryDistance = newSystemData.star.radius * 3 + 120
-      const starRadius = (newSystemData.star && typeof newSystemData.star.radius === 'number')
-        ? newSystemData.star.radius
-        : 12.0;
-
-      const entryDistance = starRadius * 2.2 + 350;
-      const entryPos = new THREE.Vector3(
-        entryDistance * 0.85,
-        35,
-        entryDistance * 0.55
-      );
-      const starCenter = new THREE.Vector3(0, 0, 0);
-
-      this.repositionPlayer(entryPos, starCenter);
-
-      // 5. Store references and invoke onSystemChanged callback
+      // 4. Store references and hand placement of the player to the callback
       this.currentSystemData = newSystemData;
       this.currentSystemMeshes = newSystemMeshes;
       this.currentSeed = this.targetSeed;
@@ -721,72 +700,6 @@ export class HyperspaceManager {
       }
     } catch (err) {
       console.error('[HyperspaceManager] Failed to transition solar system:', err);
-    }
-  }
-
-  /**
-   * Safely positions and orients the ship and camera, setting initial cruising speed.
-   * @private
-   */
-  repositionPlayer(targetPos, lookTarget) {
-    const cruisingSpeed = 120;
-
-    // Reposition using SpaceshipControls API if available
-    if (this.spaceshipControls) {
-      if (typeof this.spaceshipControls.setPosition === 'function') {
-        this.spaceshipControls.setPosition(targetPos.x, targetPos.y, targetPos.z);
-      }
-
-      if (typeof this.spaceshipControls.lookAt === 'function') {
-        this.spaceshipControls.lookAt(lookTarget);
-      }
-
-      if (typeof this.spaceshipControls.resetVelocity === 'function') {
-        this.spaceshipControls.resetVelocity();
-      }
-
-      if (typeof this.spaceshipControls.setSpeed === 'function') {
-        this.spaceshipControls.setSpeed(cruisingSpeed);
-      } else if ('speed' in this.spaceshipControls) {
-        this.spaceshipControls.speed = cruisingSpeed;
-      }
-
-      if ('currentSpeed' in this.spaceshipControls) {
-        this.spaceshipControls.currentSpeed = cruisingSpeed;
-      }
-
-      if ('movementSpeed' in this.spaceshipControls) {
-        this.spaceshipControls.movementSpeed = cruisingSpeed;
-      }
-
-      // Also set direction vector towards center star if velocity vector exists
-      if (this.spaceshipControls.velocity && typeof this.spaceshipControls.velocity.copy === 'function') {
-        const forward = new THREE.Vector3().subVectors(lookTarget, targetPos).normalize();
-        this.spaceshipControls.velocity.copy(forward.multiplyScalar(cruisingSpeed));
-      }
-
-      // Direct spaceship mesh repositioning
-      const shipMesh = this.spaceshipControls.spaceship?.mesh ||
-                       this.spaceshipControls.ship?.mesh ||
-                       this.spaceshipControls.ship ||
-                       this.spaceshipControls.mesh;
-
-      if (shipMesh && shipMesh.position && typeof shipMesh.position.copy === 'function') {
-        shipMesh.position.copy(targetPos);
-        if (typeof shipMesh.lookAt === 'function') {
-          shipMesh.lookAt(lookTarget);
-        }
-      }
-    }
-
-    // Direct camera repositioning if controls are not managing camera
-    if (this.camera && (!this.spaceshipControls || typeof this.spaceshipControls.update !== 'function')) {
-      if (this.camera.position && typeof this.camera.position.copy === 'function') {
-        this.camera.position.copy(targetPos);
-      }
-      if (typeof this.camera.lookAt === 'function') {
-        this.camera.lookAt(lookTarget);
-      }
     }
   }
 

@@ -124,6 +124,8 @@ export function createGasGiantTexture(primaryColorHex, secondaryColorHex, seed =
 
   ctx.putImageData(imgData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
@@ -204,6 +206,8 @@ export function createTerrestrialTexture(planetType, primaryColorHex, seed = 77)
 
   ctx.putImageData(imgData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
@@ -256,6 +260,8 @@ export function createCrateredTexture(baseColorHex, seed = 99) {
 
   ctx.putImageData(imgData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
@@ -301,6 +307,8 @@ export function createCloudTexture(seed = 101) {
 
   ctx.putImageData(imgData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
@@ -358,6 +366,8 @@ export function createRingTexture(ringColorHex, seed = 55) {
 
   ctx.putImageData(imgData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
@@ -405,6 +415,8 @@ export function createStarPhotosphereTexture(starColorHex, seed = 12) {
 
   ctx.putImageData(imgData, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.needsUpdate = true;
@@ -452,6 +464,8 @@ export function createDiffractionStarTexture() {
   ctx.stroke();
 
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
   texture.needsUpdate = true;
   return texture;
 }

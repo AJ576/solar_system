@@ -95,10 +95,13 @@ export class SpaceDust {
 
     // Calculate streak elongation factor
     // At rest: very short dot (~0.05u). At 150u/s: ~1.2u. At 450u/s boost: ~4.5u.
+    // Streak length grows with speed but is capped so cruise-drive speeds don't fill the screen
     const streakLengthFactor = isBoosting ? 0.016 : 0.009;
-    const vx = shipVelocity ? shipVelocity.x * streakLengthFactor : 0;
-    const vy = shipVelocity ? shipVelocity.y * streakLengthFactor : 0;
-    const vz = shipVelocity ? shipVelocity.z * streakLengthFactor : 0;
+    const streakLength = Math.min(speed * streakLengthFactor, 8.0);
+    const inv = speed > 1e-6 ? streakLength / speed : 0;
+    const vx = shipVelocity ? shipVelocity.x * inv : 0;
+    const vy = shipVelocity ? shipVelocity.y * inv : 0;
+    const vz = shipVelocity ? shipVelocity.z * inv : 0;
 
     // Boost opacity and color intensity
     this.material.opacity = isBoosting ? 0.95 : THREE.MathUtils.lerp(0.35, 0.75, Math.min(1.0, speed / 150.0));

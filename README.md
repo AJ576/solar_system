@@ -21,63 +21,44 @@ An interactive, playable 3D space exploration prototype built with Three.js and 
   - Multi-tiered moon orbit hierarchies.
   - Surface distance proximity queries for navigation telemetry.
 
-- **6DOF Spaceship & Flight Physics**:
-  - Procedural 3D composite starfighter model featuring an aerodynamic faceted hull, tinted canopy, swept delta wings with canted stabilizer fins, aviation navigation lights, and dual plasma exhaust bells with dynamic throttle flares.
-  - Responsive flight model with inertial space gliding and frame-rate-independent damping.
-  - Afterburner boost drive with energy consumption and dynamic replenishment.
-  - Emergency airbrakes for rapid stopping.
-  - Smooth third-person trailing chase camera with velocity-based dynamic FOV and banking.
+- **Flight Model**:
+  - Persistent throttle (W/S) with smooth acceleration; boost and boost release both ease rather than snap.
+  - Flight-assisted velocity that swings toward the nose, so turns carry a little momentum.
+  - Cruise drive for travel between bodies: its speed limit scales with altitude above the nearest body, so it slows on approach and disengages automatically when close.
+  - Local reference frames: inside a body's sphere of influence the ship moves with that body, so planets hold still relative to you when you are near them.
+  - Solid bodies: swept-sphere collision against the star, planets and moons (no tunnelling at cruise speed).
+  - Smoothed mouse steering and a lagged chase camera with speed-based FOV.
 
 - **Interstellar Hyperspace Jump Drive**:
-  - Complete 4-phase transition state machine: `IDLE` -> `CHARGING` (1.2s) -> `WARPING` (1.8s) -> `ARRIVING` (1.0s).
-  - 1,000-streak warp tunnel effect with screen-space warp flash overlay and camera vibration.
-  - Synthesized Web Audio API sound effects for drive spin-up, warp boom, and arrival.
-  - Atomic world swap with zero-leak resource disposal and safe outer-system player repositioning.
+  - 4-phase transition: `IDLE` -> `CHARGING` (1.2s) -> `WARPING` (1.8s) -> `ARRIVING` (1.0s).
+  - Warp streaks, flash overlay, camera shake and synthesized Web Audio effects.
+  - The new system is swapped in behind the flash and the ship arrives next to one of its inner planets.
 
-- **Sci-Fi HUD & Telemetry Overlay**:
-  - High-tech glassmorphism interface with monospace typography.
-  - Real-time speedometer gauge, throttle percentage, and boost reservoir bar.
-  - Holographic center reticle with horizon notches and elevation ladders.
-  - Celestial body proximity scanner with approach/recede distance indicators.
-  - Seed input bar for jumping to custom or random solar systems anytime.
-  - Toggleable keybindings modal (`F1` or `?`).
+- **HUD**:
+  - Restrained instrument-style overlay (Inter, tabular numerals, one amber accent for the target).
+  - Target bracket that follows the body's on-screen size, flight-path marker, and an off-screen arrow that points toward the target.
+  - Speed, throttle, drive mode, boost energy, target distance/closing speed/ETA, proximity altitude.
+  - Clickable list of every body in the system (`L`), seed input for custom or random jumps, help overlay (`F1` or `?`).
 
 ---
 
 ## Controls
 
-| Key / Input | Action | Description |
-|---|---|---|
-| **W** | Accelerate forward | Linear thrust along nose direction ($120\text{ u/s}^2$ up to $160\text{ u/s}$) |
-| **S** | Reverse thrust | Decelerates or reverses ship up to $60\text{ u/s}$ |
-| **A / D** | Yaw turn left / right | Pure uncoupled yaw rotation around ship's local vertical axis (zero roll drift) |
-| **Q / E** | Roll left / right | Bank wings along ship's longitudinal axis ($2.8\text{ rad/s}$) |
-| **Mouse** | 1:1 Direct Pitch & Yaw | Razor-sharp steering with zero rotational lag (Click canvas to toggle pointer lock) |
-| **Space** | Afterburner Boost | Explosive thrust surge ($280\text{ u/s}^2$ up to $450\text{ u/s}$) |
-| **Shift** | Active Retro-Braking | Reverse RCS thrusters cancel velocity vector ($65\text{ u/s}^2$) to dead stop |
-| **T / Shift+T** | Target Next / Prev Body | Cycles deliberate targeting through Star, Planets, and Moons |
-| **H** | Hyperspace Jump | Spools warp drive and transitions into a new procedural solar system |
-| **F1 / ?** | Toggle Controls Help | Opens in-game telemetry & controls manual overlay |
-| **Escape** | Release pointer lock | Unlocks mouse cursor from the canvas |
-
----
-
-## Flight HUD & Direction Indicators
-
-The cockpit HUD provides three distinct, non-overlapping visual flight indicators:
-
-1. **Ship Heading Reticle (Center Cyan Crosshair)**:
-   - Permanently locked to the ship's nose forward vector ($50\%, 50\%$).
-   - Shows where the starfighter is pointing and where forward thrusters will apply acceleration.
-2. **Velocity Direction Indicator (Green/Cyan Flight Path Marker)**:
-   - An aerospace standard flight path marker ($\text{---}\circ\text{---}$) projected dynamically onto the screen from physical velocity $\vec{V}$.
-   - Shows the exact direction the vessel is traveling through space.
-   - When coasting or drifting sideways, smoothly separates from the heading reticle to visualize Newtonian momentum.
-3. **Selected Celestial Target Marker (Amber Diamond Bracket & Tag)**:
-   - World-space projected targeting bracket over the currently selected celestial body.
-   - Displays real-time name and surface distance (`[ 1,450 u ]`).
-   - Remains 100% stable until explicitly changed using `T` / `Shift+T`.
-   - When target is off-screen or behind the camera, a perimeter edge pointer displays directional bearing.
+| Key / Input | Action |
+|---|---|
+| **Mouse** | Pitch & yaw (click the canvas to capture the mouse, Esc to release) |
+| **W / S** | Throttle up / down (throttle stays where you leave it) |
+| **X** | Cut throttle |
+| **A / D** | Yaw left / right |
+| **Q / E** | Roll left / right |
+| **Space** | Boost (normal drive only, uses boost energy) |
+| **Shift** | Brake (also pulls the throttle down) |
+| **C** | Toggle cruise drive (fast travel; slows automatically near bodies) |
+| **T / Shift+T** | Next / previous target |
+| **R** | Target the body nearest the crosshair |
+| **L** | Toggle the list of bodies |
+| **H** | Hyperspace jump (to the seed in the input, or a random one) |
+| **F1 / ?** | Help |
 
 ---
 
@@ -100,59 +81,58 @@ npm run build
 npm run preview
 ```
 
-### Running Subsystem Verification Tests
+### Running Tests
 ```bash
-node tests/verify_game.mjs
+node tests/test_flight_and_world.mjs
 ```
+Covers generation determinism and spacing, throttle/boost/brake behaviour, cruise drive slowdown and auto-disengage, collisions, local reference frames and targeting.
 
 ---
 
-## Architecture & Subagent Responsibilities
+## Architecture
 
-The codebase follows a modular architecture orchestrated by `src/game.js`:
+The codebase is orchestrated by `src/game.js`:
 
 ```
 src/
 ├── index.html                  # HTML entry point with canvas and #hud-container
-├── style.css                   # Global styles & sci-fi UI theme
+├── style.css                   # Global styles
 ├── script.js                   # Application bootstrap
-├── game.js                     # Main orchestrator & game loop coordinator
+├── game.js                     # Game loop: orbits -> frame carry -> flight -> collisions -> camera -> HUD
 ├── utils/
-│   └── random.js               # Deterministic Mulberry32 PRNG & system namer
+│   └── random.js               # Deterministic PRNG & system namer
 ├── systems/
-│   ├── solarSystemGenerator.js # [Agent 1] Procedural generation & mesh builder
-│   └── hyperspace.js           # [Agent 4] Hyperspace state machine & warp effects
+│   ├── solarSystemGenerator.js # Procedural generation & mesh builder
+│   ├── celestialBodies.js      # Body registry: local frames, nearest body, collisions, crosshair picking
+│   ├── targetingSystem.js      # Target selection & telemetry (distance, closing speed, ETA)
+│   └── hyperspace.js           # Hyperspace state machine & warp effects
 ├── physics/
-│   └── orbitalPhysics.js       # [Agent 2] Keplerian physics & proximity query
+│   └── orbitalPhysics.js       # Keplerian orbits and moon orbits
 ├── player/
-│   ├── spaceship.js            # [Agent 3] Procedural 3D composite spaceship
-│   └── controls.js             # [Agent 3] 6DOF flight physics & chase camera
+│   ├── spaceship.js            # Procedural 3D spaceship
+│   └── controls.js             # Flight model & chase camera
 ├── visuals/
-│   └── environment.js          # [Agent 5] Multi-layer starfield, nebula & lighting
+│   ├── environment.js          # Starfield, nebula & ambient light
+│   ├── proceduralTextures.js   # Canvas-generated planet, ring, cloud and star textures
+│   └── spaceDust.js            # Local dust streaks for speed perception
 └── ui/
-    └── hud.js                  # [Agent 5] In-game telemetry, reticle, and radar
+    └── hud.js                  # HUD overlay
 ```
 
 ---
 
-## Units & Scaling (5-Tier Astronomical Scale Hierarchy)
+## Units & Scale
 
-The world unit scale has been overhauled from toy dimensions to a monumental 5-tier astronomical hierarchy. All celestial bodies now dwarf the spacecraft, providing an authentic sense of cosmic majesty:
+1 u = 1 km.
 
-- **Spaceship**: Canonical length $2.44 u$, wingspan $2.72 u$, height $0.68 u$ (scaled $0.5\times$ from master model, representing a nimble $\sim 25\text{m}$ interceptor).
-- **Moons**: Radius $R = 6 - 32 u$ (2.5× to 13× the ship's length).
-- **Terrestrial / Rocky Planets**: Radius $R = 28 - 60 u$ (11× to 25× the ship's length, visual surface horizon visible when approaching).
-- **Gas Giants**: Radius $R = 130 - 210 u$ (53× to 86× the ship's length, with rings extending up to $500 u$).
-- **Stars (Solar Cores)**: Radius $R = 260 - 720 u$ (100× to 300× the ship's length, radiating dynamic PointLight up to $40,000 u$).
-- **Orbital Radii**: Semi-major axes $a = 1,100 - 10,000 u$ with non-overlapping perihelion/aphelion buffers.
-- **Rendering Depth**: Camera near $0.5 u$, far $75,000 u$ with WebGL `logarithmicDepthBuffer: true` to prevent z-fighting across sub-meter to mega-meter ranges.
-- **Flight Speeds & Dynamics**:
-  - Acceleration: $120 u/s^2$
-  - Cruising Velocity: $0 - 160 u/s$
-  - Afterburner Boost Velocity: up to $450 u/s$
-  - Active Retro-Braking: $65 u/s^2$ opposing velocity vector
-  - Vacuum Gliding: Zero linear drag (`linearDamping = 1.0`), pure momentum conservation when coasting
-  - Delta-time clamped to $\le 0.05s$ to guarantee closed-form numerical orbital stability.
+- **Spaceship**: ~2.5 u long.
+- **Moons**: radius ~150–500 u.
+- **Rocky / desert / ice / ocean planets**: radius 500–1,250 u.
+- **Gas giants**: radius 2,600–4,200 u, optional rings out to 2.4× radius.
+- **Stars**: radius 4,500–14,000 u.
+- **Orbits**: first planet at ~3.5 star radii + 8,000 u, then 18,000–36,000 u apart (systems span roughly 100,000–300,000 u). Inner planets take ~25–35 minutes per orbit.
+- **Speeds**: normal drive up to 300 u/s, boost 900 u/s, cruise drive up to 40,000 u/s.
+- **Rendering**: camera near 0.5 u, far 4,000,000 u, with `logarithmicDepthBuffer`.
 
 ---
 

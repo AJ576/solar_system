@@ -1,212 +1,126 @@
-import * as THREE from 'three';
-
 /**
- * Predictable, Deliberate Celestial Body Targeting System
+ * Celestial body targeting.
  *
- * Maintains a stable indexed catalog of targetable celestial bodies (Star, Planets, Moons).
- * Target selection never switches automatically; it is explicitly controlled via cycling
- * (Next: 'T', Previous: 'Shift+T') or programmatic selection.
+ * Targets come from the CelestialBodies registry, so the selected target's position
+ * is the exact same world position used for physics and rendering this frame.
+ * Selection only changes on explicit input (cycle, pick by crosshair, pick from list).
  */
 export class TargetingSystem {
   /**
-   * @param {Object} [systemData] Procedural solar system configuration data
-   * @param {Object} [systemMeshes] Mesh hierarchy in scene
+   * @param {import('./celestialBodies.js').CelestialBodies} bodies
    */
-  constructor(systemData = null, systemMeshes = null) {
-    this.targets = [];
-    this.selectedIndex = 0;
-    this.systemData = null;
-    this.systemMeshes = null;
-
-    if (systemData) {
-      this.setSystem(systemData, systemMeshes);
-    }
+  constructor(bodies) {
+    this.bodies = bodies;
+    this.selectedId = null;
   }
 
-  /**
-   * Populates the target list from system data & meshes.
-   *
-   * @param {Object} systemData
-   * @param {Object} systemMeshes
-   */
-  setSystem(systemData, systemMeshes) {
-    this.systemData = systemData;
-    this.systemMeshes = systemMeshes;
-    this.targets = [];
-
-    if (!systemData) return;
-
-    // 1. Central Star
-    if (systemData.star) {
-      const starRadius = systemData.star.radius || 350;
-      this.targets.push({
-        id: 'star',
-        name: systemData.star.name || 'Central Star',
-        type: 'Star',
-        radius: starRadius,
-        getMesh: () => this.systemMeshes?.starMesh || this.systemMeshes?.star || null,
-        defaultPosition: new THREE.Vector3(0, 0, 0),
-      });
-    }
-
-    // 2. Planets & Moons in natural orbital sequence
-    const planets = systemData.planets || [];
-    const entries = this.systemMeshes?.planetEntries || this.systemMeshes?.planets || [];
-
-    for (let i = 0; i < planets.length; i++) {
-      const p = planets[i];
-      const entry = entries[i];
-
-      this.targets.push({
-        id: `planet_${i}`,
-        name: p.name || `Planet ${i + 1}`,
-        type: p.type || 'Planet',
-        radius: p.radius || 30,
-        getMesh: () => {
-          const ent = this.systemMeshes?.planetEntries?.[i] || this.systemMeshes?.planets?.[i];
-          return ent?.isMesh ? ent : (ent?.mesh || ent?.planetMesh || null);
-        },
-        defaultPosition: new THREE.Vector3(p.semiMajorAxis || 1500, 0, 0),
-      });
-
-      // Moons belonging to this planet
-      if (p.moons && Array.isArray(p.moons)) {
-        for (let m = 0; m < p.moons.length; m++) {
-          const moon = p.moons[m];
-          this.targets.push({
-            id: `moon_${i}_${m}`,
-            name: moon.name || `${p.name} Moon ${m + 1}`,
-            type: 'Moon',
-            radius: moon.radius || 10,
-            getMesh: () => {
-              const ent = this.systemMeshes?.planetEntries?.[i] || this.systemMeshes?.planets?.[i];
-              const moonEntries = ent?.moons || ent?.moonMeshes || [];
-              const mEnt = moonEntries[m];
-              return mEnt?.isMesh ? mEnt : (mEnt?.mesh || mEnt?.moonMesh || null);
-            },
-            defaultPosition: new THREE.Vector3(0, 0, 0),
-          });
-        }
-      }
-    }
-
-    // Default to the first planet (index 1) if available, otherwise the star (0)
-    if (this.targets.length > 1) {
-      this.selectedIndex = 1;
+  /** Call after the body registry has been rebuilt for a new system. */
+  reset(defaultId = null) {
+    const list = this.bodies.bodies;
+    if (defaultId && this.bodies.getById(defaultId)) {
+      this.selectedId = defaultId;
     } else {
-      this.selectedIndex = 0;
+      this.selectedId = list.find((b) => b.kind === 'planet')?.id ?? list[0]?.id ?? null;
     }
   }
 
-  /**
-   * Cycles to the next celestial body.
-   * @returns {Object|null}
-   */
-  selectNext() {
-    if (this.targets.length === 0) return null;
-    this.selectedIndex = (this.selectedIndex + 1) % this.targets.length;
-    return this.getSelectedTarget();
+  /** Flat list for UI: moons are listed after (and indented under) their planet. */
+  getTargetList() {
+    return this.bodies.bodies.map((b) => ({
+      id: b.id,
+      name: b.name,
+      type: b.type,
+      depth: b.kind === 'moon' ? 1 : 0
+    }));
   }
 
-  /**
-   * Cycles to the previous celestial body.
-   * @returns {Object|null}
-   */
-  selectPrev() {
-    if (this.targets.length === 0) return null;
-    this.selectedIndex = (this.selectedIndex - 1 + this.targets.length) % this.targets.length;
-    return this.getSelectedTarget();
+  _indexOfSelected() {
+    return this.bodies.bodies.findIndex((b) => b.id === this.selectedId);
   }
 
-  /**
-   * Selects a target by its unique ID.
-   * @param {string} id
-   * @returns {Object|null}
-   */
+  _step(dir) {
+    const list = this.bodies.bodies;
+    if (list.length === 0) return null;
+    const idx = this._indexOfSelected();
+    const next = idx === -1 ? 0 : (idx + dir + list.length) % list.length;
+    this.selectedId = list[next].id;
+    return list[next];
+  }
+
+  selectNext() { return this._step(1); }
+
+  selectPrev() { return this._step(-1); }
+
   selectById(id) {
-    const idx = this.targets.findIndex(t => t.id === id);
-    if (idx !== -1) {
-      this.selectedIndex = idx;
-    }
-    return this.getSelectedTarget();
+    const body = this.bodies.getById(id);
+    if (body) this.selectedId = id;
+    return body;
   }
 
-  /**
-   * Returns currently selected target definition.
-   * @returns {Object|null}
-   */
+  /** Selects the body nearest the given view ray (the crosshair). */
+  selectByRay(origin, direction) {
+    const body = this.bodies.pickByRay(origin, direction);
+    if (body) this.selectedId = body.id;
+    return body;
+  }
+
   getSelectedTarget() {
-    if (this.targets.length === 0) return null;
-    return this.targets[this.selectedIndex] || null;
+    return this.bodies.getById(this.selectedId);
   }
 
   /**
-   * Computes the current world-space position of a target body.
-   * @param {Object} target
-   * @returns {THREE.Vector3}
+   * @param {THREE.Vector3} shipPos Ship world position
+   * @param {THREE.Vector3} shipVel Ship velocity relative to its local frame
+   * @param {Object|null} frameBody Body whose frame the ship is in (its motion is shared)
+   * @param {number} dt Frame time, used to derive the target's own velocity
    */
-  getTargetPosition(target) {
-    if (!target) return new THREE.Vector3(0, 0, 0);
-
-    const mesh = typeof target.getMesh === 'function' ? target.getMesh() : null;
-    if (mesh && typeof mesh.getWorldPosition === 'function') {
-      mesh.updateWorldMatrix?.(true, false);
-      const pos = new THREE.Vector3();
-      mesh.getWorldPosition(pos);
-      return pos;
-    }
-
-    if (target.defaultPosition) {
-      return target.defaultPosition.clone();
-    }
-
-    return new THREE.Vector3(0, 0, 0);
-  }
-
-  /**
-   * Evaluates targeting telemetry relative to ship's position and velocity.
-   *
-   * @param {THREE.Vector3} shipPos Ship's current world position
-   * @param {THREE.Vector3} [shipVel] Ship's current physical velocity
-   * @returns {Object|null}
-   */
-  getTelemetry(shipPos, shipVel = null) {
-    if (this.targets.length === 0) return null;
-    const target = this.targets[this.selectedIndex];
+  getTelemetry(shipPos, shipVel, frameBody = null, dt = 0.016) {
+    const target = this.getSelectedTarget();
     if (!target) return null;
 
-    const targetPos = this.getTargetPosition(target);
-    const px = shipPos ? shipPos.x : 0;
-    const py = shipPos ? shipPos.y : 0;
-    const pz = shipPos ? shipPos.z : 0;
-
-    const dx = targetPos.x - px;
-    const dy = targetPos.y - py;
-    const dz = targetPos.z - pz;
+    const dx = target.position.x - shipPos.x;
+    const dy = target.position.y - shipPos.y;
+    const dz = target.position.z - shipPos.z;
     const centerDist = Math.hypot(dx, dy, dz);
     const surfaceDist = Math.max(0, centerDist - target.radius);
 
-    // Closure rate (positive = closing / approaching, negative = receding)
-    let closingSpeed = 0;
-    let isApproaching = false;
-    if (shipVel && centerDist > 0.001) {
-      // Relative velocity projection along Line of Sight (LoS)
-      closingSpeed = (shipVel.x * dx + shipVel.y * dy + shipVel.z * dz) / centerDist;
-      isApproaching = closingSpeed > 0.5;
+    // Relative velocity = ship velocity in its frame minus target motion relative to that frame
+    let rvx = shipVel ? shipVel.x : 0;
+    let rvy = shipVel ? shipVel.y : 0;
+    let rvz = shipVel ? shipVel.z : 0;
+    if (dt > 0) {
+      const tvx = (target.position.x - target.prevPosition.x) / dt;
+      const tvy = (target.position.y - target.prevPosition.y) / dt;
+      const tvz = (target.position.z - target.prevPosition.z) / dt;
+      let fvx = 0, fvy = 0, fvz = 0;
+      if (frameBody) {
+        fvx = (frameBody.position.x - frameBody.prevPosition.x) / dt;
+        fvy = (frameBody.position.y - frameBody.prevPosition.y) / dt;
+        fvz = (frameBody.position.z - frameBody.prevPosition.z) / dt;
+      }
+      rvx -= tvx - fvx;
+      rvy -= tvy - fvy;
+      rvz -= tvz - fvz;
     }
 
+    const closingSpeed = centerDist > 1e-3 ? (rvx * dx + rvy * dy + rvz * dz) / centerDist : 0;
+    const isApproaching = closingSpeed > 0.5;
+    const eta = isApproaching ? surfaceDist / closingSpeed : null;
+
+    const list = this.bodies.bodies;
     return {
-      index: this.selectedIndex,
-      totalTargets: this.targets.length,
+      index: this._indexOfSelected(),
+      totalTargets: list.length,
       id: target.id,
       name: target.name,
       type: target.type,
       radius: target.radius,
-      position: targetPos,
+      position: target.position,
       distance: surfaceDist,
       centerDistance: centerDist,
       closingSpeed,
       isApproaching,
+      eta
     };
   }
 }

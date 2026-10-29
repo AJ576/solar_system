@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { generateSolarSystemData, buildSolarSystemMeshes, disposeSolarSystem } from './systems/solarSystemGenerator.js';
-import { updateOrbits, getNearestCelestialBody } from './physics/orbitalPhysics.js';
+import { generateSolarSystemData, buildSolarSystemMeshes } from './systems/solarSystemGenerator.js';
+import { updateOrbits, getPlanetPosition } from './physics/orbitalPhysics.js';
+import { CelestialBodies } from './systems/celestialBodies.js';
 import { TargetingSystem } from './systems/targetingSystem.js';
 import { createSpaceship } from './player/spaceship.js';
 import { SpaceshipControls } from './player/controls.js';
@@ -14,121 +15,128 @@ export class Game {
     this.canvas = document.querySelector('canvas.threejs');
     this.hudContainer = document.getElementById('hud-container');
 
-    // 1. Scene, Camera, Renderer (Calibrated for Canonical 20,000u Scale)
+    // 1. Scene, camera, renderer. 1 u = 1 km; systems span a few hundred thousand units.
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(
-      60,
-      window.innerWidth / window.innerHeight,
-      0.5,     // Near plane (never clips 0.5x ship, maximizes depth buffer precision)
-      75000   // Far plane (renders full solar system without horizon culling)
-    );
+    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 4e6);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
       antialias: true,
       powerPreference: 'high-performance',
-      logarithmicDepthBuffer: true // Eliminates Z-fighting across massive 0.5 - 75000u depth range
+      logarithmicDepthBuffer: true
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.0;
 
-    // 2. Visual Environment (3-tier deep space starfield, dark nebulae & ambient fill)
+    // 2. Background, local dust, ship
     this.environment = createEnvironment(this.scene);
-
-    // 3. Local Space Dust & Optical Flow Streaks (Provides immediate velocity perception)
     this.spaceDust = new SpaceDust(this.scene, 800, 45.0);
 
-    // 4. Spaceship & Responsive Newtonian Flight Controls
     this.spaceship = createSpaceship();
     this.scene.add(this.spaceship.mesh);
-
     this.controls = new SpaceshipControls(this.spaceship, this.camera, this.canvas);
+    this.controls.onEvent = (type, detail) => this.onFlightEvent(type, detail);
 
-    // 5. Initial Procedural Solar System (5-Tier Canonical Scale Hierarchy)
-    this.currentSeed = 'Sol-Prime-42';
-    this.systemData = generateSolarSystemData(this.currentSeed);
+    // 3. Solar system + body registry + targeting
+    this.totalSimTime = 0;
+    this.systemData = generateSolarSystemData('Sol-Prime-42');
     this.systemMeshes = buildSolarSystemMeshes(this.systemData, this.scene);
+    updateOrbits(this.systemMeshes, this.systemData, 0, this.totalSimTime);
+    this.bodies = new CelestialBodies(this.systemData, this.systemMeshes);
+    this.targeting = new TargetingSystem(this.bodies);
 
-    // 6. Predictable Celestial Body Targeting System
-    this.targeting = new TargetingSystem(this.systemData, this.systemMeshes);
+    // 4. HUD
+    this.hud = new HUD(this.hudContainer, {
+      onJump: (seed) => this.hyperspace.initiateJump(seed),
+      onTargetNext: () => this.notifyTarget(this.targeting.selectNext()),
+      onTargetPrev: () => this.notifyTarget(this.targeting.selectPrev()),
+      onTargetSelect: (id) => this.notifyTarget(this.targeting.selectById(id))
+    });
 
-    // Position player ship at sensible entry point in the initial system
-    this.positionPlayerInSystem();
-
-    // 7. Hyperspace Transition Manager
+    // 5. Hyperspace: swaps the system mid-warp and hands control back to us for placement
     this.hyperspace = new HyperspaceManager(
       this.scene,
       this.camera,
       this.controls,
-      (newSystemData, newSystemMeshes) => {
-        this.systemData = newSystemData;
-        this.systemMeshes = newSystemMeshes;
-        this.currentSeed = newSystemData.seed;
-        this.targeting.setSystem(newSystemData, newSystemMeshes);
-        this.hyperspace.setCurrentSystem(newSystemData, newSystemMeshes);
-
-        if (this.hud) {
-          this.hud.showNotification(`ARRIVED AT ${newSystemData.name.toUpperCase()}`, 3500);
-        }
-      },
+      (newSystemData, newSystemMeshes) => this.onSystemChanged(newSystemData, newSystemMeshes),
       this.systemData,
       this.systemMeshes
     );
 
-    // 8. Sci-Fi HUD Overlay with Heading, Velocity & Target Markers
-    this.hud = new HUD(
-      this.hudContainer,
-      (targetSeed) => {
-        if (!this.hyperspace.isTransitioning()) {
-          this.hyperspace.initiateJump(targetSeed);
-        }
-      },
-      () => {
-        const next = this.targeting.selectNext();
-        if (next && this.hud) {
-          this.hud.showNotification(`TARGET: ${next.name.toUpperCase()}`, 2000);
-        }
-      },
-      () => {
-        const prev = this.targeting.selectPrev();
-        if (prev && this.hud) {
-          this.hud.showNotification(`TARGET: ${prev.name.toUpperCase()}`, 2000);
-        }
-      }
-    );
-
-    // 9. Event Listeners
+    this.enterSystem();
     this.initEvents();
 
-    // 10. Simulation Clock
+    this._prevShipPos = new THREE.Vector3();
+    this._toBody = new THREE.Vector3();
+    this._camForward = new THREE.Vector3();
+
+    setTimeout(() => this.hud.showNotification(`Welcome to ${this.systemData.name}`, 3500), 400);
+
     this.clock = new THREE.Clock();
-    this.totalSimTime = 0;
-
-    // 10. Initial Welcome notification
-    setTimeout(() => {
-      if (this.hud && this.systemData) {
-        this.hud.showNotification(`SYSTEM: ${this.systemData.name.toUpperCase()}`, 3500);
-      }
-    }, 500);
-
-    // 11. Start Game Loop
     this.animate = this.animate.bind(this);
     requestAnimationFrame(this.animate);
   }
 
-  positionPlayerInSystem() {
-    // Position outside stellar corona, facing inwards towards star and inner planets
-    const starRadius = (this.systemData.star && this.systemData.star.radius) || 400;
-    const entryDistance = Math.max(900, starRadius * 2.2 + 350);
-    const startX = entryDistance * 0.85;
-    const startZ = entryDistance * 0.55;
-    const startY = 35;
+  /**
+   * Places the ship near one of the inner planets, looking at its lit side,
+   * and targets it. The ship starts inside the planet's local frame, so it holds still.
+   */
+  enterSystem() {
+    const planets = this.systemData.planets;
+    const index = Math.min(1, planets.length - 1);
+    const planet = planets[index];
 
-    this.controls.setPosition(startX, startY, startZ);
-    this.controls.lookAt(new THREE.Vector3(0, 0, 0));
+    const planetPos = getPlanetPosition(planet, this.totalSimTime, new THREE.Vector3());
+    const toStar = planetPos.clone().negate().normalize();
+    const tangent = new THREE.Vector3(0, 1, 0).cross(toStar).normalize();
+    const offsetDir = toStar.multiplyScalar(0.55).add(tangent.multiplyScalar(0.85)).normalize();
+    offsetDir.y += 0.18;
+    offsetDir.normalize();
+
+    const viewDistance = planet.radius * 3.2 + 600;
+    const shipPos = planetPos.clone().addScaledVector(offsetDir, viewDistance);
+
+    this.controls.setPosition(shipPos.x, shipPos.y, shipPos.z);
+    this.controls.lookAt(planetPos);
     this.controls.resetVelocity();
+
+    this.bodies.sample(true);
+    this.targeting.reset(`planet_${index}`);
+    this.hud.setTargetList(this.targeting.getTargetList());
+  }
+
+  onSystemChanged(newSystemData, newSystemMeshes) {
+    this.systemData = newSystemData;
+    this.systemMeshes = newSystemMeshes;
+    this.totalSimTime = 0;
+    updateOrbits(this.systemMeshes, this.systemData, 0, 0);
+    this.bodies.setSystem(newSystemData, newSystemMeshes);
+    this.hyperspace.setCurrentSystem(newSystemData, newSystemMeshes);
+    this.enterSystem();
+    this.hud.showNotification(`Arrived at ${newSystemData.name}`, 3500);
+  }
+
+  notifyTarget(body) {
+    if (body) this.hud.showNotification(`Target: ${body.name}`, 1600);
+  }
+
+  onFlightEvent(type, detail) {
+    if (type === 'cruise-spool') {
+      this.hud.showNotification('Cruise drive spooling…', 1400);
+    } else if (type === 'cruise-engaged') {
+      this.hud.showNotification('Cruise drive engaged', 1600);
+    } else if (type === 'cruise-disengaged') {
+      const reasons = {
+        proximity: 'Cruise disengaged — approaching body',
+        impact: 'Cruise disengaged — impact',
+        brake: 'Cruise disengaged',
+        manual: 'Cruise disengaged',
+        cancelled: 'Cruise cancelled'
+      };
+      this.hud.showNotification(reasons[detail?.reason] || 'Cruise disengaged', 1800);
+    }
   }
 
   initEvents() {
@@ -139,17 +147,12 @@ export class Game {
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     });
 
-    // Global Hyperspace trigger key
+    // R: target whatever is closest to the crosshair
     window.addEventListener('keydown', (e) => {
-      // Don't trigger if user is typing in an input field
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
-        return;
-      }
-
-      if (e.key === 'h' || e.key === 'H') {
-        if (!this.hyperspace.isTransitioning()) {
-          this.hyperspace.initiateJump();
-        }
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.code === 'KeyR' && !e.repeat) {
+        this._camForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        this.notifyTarget(this.targeting.selectByRay(this.camera.position, this._camForward));
       }
     });
   }
@@ -157,43 +160,54 @@ export class Game {
   animate() {
     requestAnimationFrame(this.animate);
 
-    // Clamp delta time to avoid physics tunneling during tab switches or frame spikes
     const delta = Math.min(this.clock.getDelta(), 0.05);
     this.totalSimTime += delta;
+    const ship = this.controls.ship;
 
-    // A. Update Orbital Mechanics (Planets, Moons & Differential Clouds via Keplerian laws)
-    if (this.systemMeshes && this.systemData) {
-      updateOrbits(this.systemMeshes, this.systemData, delta, this.totalSimTime);
+    // A. Move the bodies, then carry the ship along with its local reference frame
+    updateOrbits(this.systemMeshes, this.systemData, delta, this.totalSimTime);
+    this.bodies.sample();
+    const { displacement, frameBody } = this.bodies.computeFrameCarry(ship.position);
+    ship.position.add(displacement);
+
+    // B. Feed the nearest body to the flight model (cruise speed limiting) and fly
+    const nearest = this.bodies.findNearest(ship.position);
+    if (nearest) {
+      this._toBody.subVectors(nearest.body.position, ship.position).normalize();
+      this.controls.setEnvironment({
+        altitude: nearest.altitude,
+        radius: nearest.body.radius,
+        name: nearest.body.name,
+        toBody: this._toBody
+      });
     }
-
-    // B. Update Spaceship Flight Controls & Follow Camera
+    this.controls.enabled = this.hyperspace.getState().state !== 'WARPING';
+    this._prevShipPos.copy(ship.position);
     this.controls.update(delta);
 
-    // C. Update Local Space Dust (Streaks past ship to communicate physical velocity)
-    const shipPos = this.controls.getPosition();
-    if (this.spaceDust) {
-      this.spaceDust.update(shipPos, this.controls.velocity, this.controls.isBoosting, delta);
+    // C. Bodies are solid
+    const hit = this.bodies.resolveCollision(this._prevShipPos, ship.position, this.controls.config.shipRadius);
+    if (hit) {
+      const impactSpeed = this.controls.applyImpact(hit.normal);
+      if (impactSpeed > 15) {
+        this.hud.flashImpact(Math.min(1, impactSpeed / 300));
+      }
     }
 
-    // D. Update Hyperspace Transition Manager & Visual Effects
+    // D. Camera, then everything that depends on its final pose
+    this.controls.updateCamera(delta);
     this.hyperspace.update(delta);
+    this.spaceDust.update(ship.position, this.controls.velocity, this.controls.isBoosting, delta);
+    this.environment.update(this.camera.position, delta);
 
-    // E. Update Environment (keeps infinite starfield centered on camera)
-    if (this.environment && typeof this.environment.update === 'function') {
-      this.environment.update(this.camera.position, delta);
-    }
-
-    // F. Deliberate Celestial Body Targeting Query
-    const targetingTelemetry = this.targeting
-      ? this.targeting.getTelemetry(shipPos, this.controls.velocity)
-      : getNearestCelestialBody(shipPos, this.systemMeshes, this.systemData);
-
-    // G. Update Sci-Fi HUD Telemetry, Direction Indicators & Radar
+    // E. HUD
     const telemetry = this.controls.getTelemetry();
-    const hyperspaceState = this.hyperspace.getState();
-    this.hud.update(telemetry, targetingTelemetry, hyperspaceState, this.systemData, this.camera);
+    telemetry.nearest = nearest
+      ? { name: nearest.body.name, radius: nearest.body.radius, altitude: nearest.altitude }
+      : null;
+    const targetTelemetry = this.targeting.getTelemetry(ship.position, this.controls.velocity, frameBody, delta);
+    this.hud.update(telemetry, targetTelemetry, this.hyperspace.getState(), this.systemData, this.camera);
 
-    // H. Render Scene
     this.renderer.render(this.scene, this.camera);
   }
 }
