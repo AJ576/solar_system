@@ -434,11 +434,12 @@ export function buildSolarSystemMeshes(systemData, scene) {
       axisGroup.add(cloudMesh);
     }
 
+    let atmoMesh = null;
     const atmoConfig = hasTerrain
       ? planetData.terrainProfile.atmosphere
       : PLANET_TYPE_CONFIGS[planetData.type]?.atmosphere;
     if (atmoConfig) {
-      const atmoMesh = createAtmosphere({ planetRadius: planetData.radius, config: atmoConfig, sun: starMesh });
+      atmoMesh = createAtmosphere({ planetRadius: planetData.radius, config: atmoConfig, sun: starMesh });
       atmoMesh.name = `Atmosphere_${planetData.name}`;
       planetGroup.add(atmoMesh);
     }
@@ -479,7 +480,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
       terrainLOD = new PlanetTerrain(planetData, planetMesh, planetData.terrainProfile);
     }
 
-    planetMesh.userData = { ...planetData, cloudMesh, terrainLOD, ringMesh };
+    planetMesh.userData = { ...planetData, cloudMesh, terrainLOD, ringMesh, atmoMesh };
 
     // Moons orbit the non-rotating planet frame
     const moonEntries = [];
@@ -515,6 +516,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
       terrainLOD,
       cloudMesh,
       ringMesh,
+      atmoMesh,
       orbitLine,
       moons: moonEntries
     });

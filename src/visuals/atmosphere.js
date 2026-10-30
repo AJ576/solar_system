@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createShadowUniforms, CELESTIAL_SHADOW_PARS_FRAGMENT } from './shadows.js';
 
 /**
  * Ray-marched atmosphere shell.
@@ -21,15 +22,16 @@ import * as THREE from 'three';
 export function createAtmosphere({ planetRadius, config, sun = null }) {
   const atmoRadius = planetRadius * (1 + (config.height ?? 0.06));
 
+  const shadowUniforms = createShadowUniforms();
   const uniforms = {
     uCenter: { value: new THREE.Vector3() },
-    uSunPosition: { value: new THREE.Vector3() },
     uPlanetRadius: { value: planetRadius },
     uAtmoRadius: { value: atmoRadius },
     uColor: { value: new THREE.Color(config.color) },
     uSunsetColor: { value: new THREE.Color(config.sunsetColor ?? 0xff7a40) },
     uDensity: { value: config.density ?? 1.0 },
-    uFalloff: { value: config.falloff ?? 3.5 }
+    uFalloff: { value: config.falloff ?? 3.5 },
+    ...shadowUniforms
   };
 
   const material = new THREE.ShaderMaterial({
@@ -49,7 +51,6 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
       #include <common>
       #include <logdepthbuf_pars_fragment>
       uniform vec3 uCenter;
-      uniform vec3 uSunPosition;
       uniform float uPlanetRadius;
       uniform float uAtmoRadius;
       uniform vec3 uColor;
@@ -57,6 +58,8 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
       uniform float uDensity;
       uniform float uFalloff;
       varying vec3 vWorldPos;
+
+      ${CELESTIAL_SHADOW_PARS_FRAGMENT}
 
       // Ray / sphere (centered at origin) intersection distances, (-1,-1) on miss
       vec2 raySphere(vec3 ro, vec3 rd, float r) {
@@ -117,8 +120,12 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
         float mu = dot(rd, sunDirCam);
         float phase = 0.75 * (1.0 + mu * mu) + 0.6 * pow(max(mu, 0.0), 12.0);
 
-        vec3 color = light * phase * 1.6;
-        float dayFrac = optical > 0.0 ? dayAccum / optical : 0.0;
+        // Eclipse shadow calculated once per pixel at the atmosphere ray segment midpoint
+        vec3 midPos = ro + rd * (0.5 * (t0 + t1)) + uCenter;
+        float atmoShadow = calculateEclipseShadow(midPos);
+
+        vec3 color = light * phase * 1.6 * atmoShadow;
+        float dayFrac = optical > 0.0 ? (dayAccum / optical) * atmoShadow : 0.0;
         float alpha = (1.0 - exp(-optical * 1.2)) * mix(0.25, 0.9, dayFrac);
 
         gl_FragColor = vec4(color, alpha);
@@ -133,12 +140,16 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
     blendDst: THREE.OneMinusSrcAlphaFactor
   });
 
+  material.userData = material.userData || {};
+  material.userData.shadowUniforms = shadowUniforms;
+
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(atmoRadius, 96, 64), material);
   mesh.name = 'Atmosphere';
   // Draw after the surface, ocean and clouds
   mesh.renderOrder = 2;
   mesh.onBeforeRender = () => {
     mesh.getWorldPosition(uniforms.uCenter.value);
+    uniforms.uPlanetCenter.value.copy(uniforms.uCenter.value);
     if (sun) sun.getWorldPosition(uniforms.uSunPosition.value);
   };
   return mesh;

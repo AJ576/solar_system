@@ -13,7 +13,7 @@ import { getTerrainAltitude } from './terrain/terrainCollision.js';
 import { getSolidSurfaceHeight, getSurfaceNormal } from './terrain/terrainGenerator.js';
 import { OnFootController } from './player/onFoot.js';
 import { AudioManager } from './audio/audioManager.js';
-import { updateCelestialShadows } from './visuals/shadows.js';
+import { updateCelestialShadows, getCelestialShadowFactor } from './visuals/shadows.js';
 import { ShipContactShadow } from './visuals/shipShadow.js';
 
 // G lands the ship below this altitude and speed
@@ -236,6 +236,19 @@ export class Game {
     return { near, sun: up.dot(toSun) };
   }
 
+  _getBodyShadowFactor(body, pos) {
+    if (!body) return 1.0;
+    const mesh = body.mesh || body.object;
+    const uniforms = mesh?.userData?.terrainLOD?.material?.userData?.shadowUniforms
+      || mesh?.material?.userData?.shadowUniforms
+      || mesh?.userData?.atmoMesh?.material?.userData?.shadowUniforms
+      || body.terrainLOD?.material?.userData?.shadowUniforms;
+    if (uniforms) {
+      return getCelestialShadowFactor(pos, uniforms);
+    }
+    return 1.0;
+  }
+
   /**
    * Ambient sky light near a surface. Bodies with an atmosphere get a tinted glow at all
    * times (scattered light by day, airglow and twilight by night), scaled by how thick the
@@ -250,6 +263,7 @@ export class Game {
       return 0;
     }
     const night = 1 - THREE.MathUtils.smoothstep(sun, -0.15, 0.2);
+    const shadowFactor = this._getBodyShadowFactor(body, this.camera.position);
     const atmo = body.terrainProfile?.atmosphere;
     if (atmo) {
       const density = THREE.MathUtils.clamp(atmo.density, 0.3, 1.6);
@@ -259,12 +273,13 @@ export class Game {
       this._skyColor.setHex(atmo.color).lerp(this._sunsetColor.setHex(atmo.sunsetColor ?? atmo.color), twilight * 0.7);
       const strength = Math.min(1.1, density * variation);
       this.skyLight.color.copy(this._skyColor);
-      this.skyLight.intensity = near * strength * (0.3 + 0.45 * night);
+      this.skyLight.intensity = near * strength * (0.3 * shadowFactor + 0.45 * night);
     } else {
       this.skyLight.color.setHex(0x8a96b8);
-      this.skyLight.intensity = near * night * 0.8;
+      this.skyLight.intensity = near * night * 0.8 * shadowFactor;
     }
-    return near * night;
+    const darkness = Math.max(near * night, near * (1.0 - shadowFactor));
+    return darkness;
   }
 
   _updateLights(nearest) {

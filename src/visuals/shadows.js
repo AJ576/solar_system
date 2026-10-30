@@ -40,9 +40,7 @@ export function createRingShadowUniforms() {
   };
 }
 
-const CELESTIAL_SHADOW_PARS_FRAGMENT = /* glsl */`
-  varying vec3 vShadowWorldPos;
-
+export const CELESTIAL_SHADOW_PARS_FRAGMENT = /* glsl */`
   uniform vec3 uSunPosition;
   uniform float uSunRadius;
   uniform vec4 uOccluders[4]; // xyz = world center, w = radius
@@ -54,6 +52,7 @@ const CELESTIAL_SHADOW_PARS_FRAGMENT = /* glsl */`
   uniform float uRingOuter;
 
   float calculateEclipseShadow(vec3 worldPos) {
+    if (uOccluderCount == 0 && uHasRings == 0) return 1.0;
     vec3 toSun = uSunPosition - worldPos;
     float dSun = length(toSun);
     if (dSun < 1.0) return 1.0;
@@ -195,6 +194,7 @@ export function applyCelestialShadows(material, isRing = false) {
       );
     } else {
       shader.fragmentShader = `
+        varying vec3 vShadowWorldPos;
         ${CELESTIAL_SHADOW_PARS_FRAGMENT}
         ${shader.fragmentShader}
       `.replace(
@@ -213,11 +213,143 @@ export function applyCelestialShadows(material, isRing = false) {
 const _starPos = new THREE.Vector3();
 const _planetPos = new THREE.Vector3();
 const _moonPos = new THREE.Vector3();
+const _siblingPos = new THREE.Vector3();
 const _axisQuat = new THREE.Quaternion();
 const _ringNormal = new THREE.Vector3();
 
+// Scratch variables for CPU occluder culling
+const _vToSun = new THREE.Vector3();
+const _vSunDir = new THREE.Vector3();
+const _vToOcc = new THREE.Vector3();
+
+// Preallocated scratch storage for up to 4 occluders per body (zero GC allocations)
+const _occScratch = [
+  new THREE.Vector4(),
+  new THREE.Vector4(),
+  new THREE.Vector4(),
+  new THREE.Vector4()
+];
+
+// Scratch variables for getCelestialShadowFactor
+const _scratchToSun = new THREE.Vector3();
+const _scratchSunDir = new THREE.Vector3();
+const _scratchToOcc = new THREE.Vector3();
+const _scratchWorldToCenter = new THREE.Vector3();
+const _scratchHitPos = new THREE.Vector3();
+
+/**
+ * Tests whether an occluder sphere can cast a shadow on any part of a receiver sphere.
+ * Used for zero-cost CPU culling when no eclipse is occurring.
+ *
+ * @param {THREE.Vector3} receiverPos World position of receiver center
+ * @param {number} receiverRadius Radius of receiver bounding sphere
+ * @param {THREE.Vector3} occluderPos World position of occluder center
+ * @param {number} occluderRadius Radius of occluder sphere
+ * @param {THREE.Vector3} sunPos World position of sun center
+ * @param {number} sunRadius Radius of sun
+ * @returns {boolean} True if shadow is geometrically possible
+ */
+export function canOccluderShadowReceiver(
+  receiverPos, receiverRadius,
+  occluderPos, occluderRadius,
+  sunPos, sunRadius
+) {
+  _vToSun.subVectors(sunPos, receiverPos);
+  const dSun = _vToSun.length();
+  if (dSun < 1.0) return false;
+  _vSunDir.copy(_vToSun).divideScalar(dSun);
+
+  _vToOcc.subVectors(occluderPos, receiverPos);
+  const t = _vToOcc.dot(_vSunDir);
+  // Occluder must be in front of receiver toward the sun, and closer than the sun
+  if (t <= 0 || t >= dSun) return false;
+
+  const distSq = _vToOcc.lengthSq() - t * t;
+  const rPenumbraSpread = t * (sunRadius / dSun);
+  // Add a 10% safety margin + 50 units for atmosphere shell and numerical precision
+  const maxPerpDist = (receiverRadius + occluderRadius + rPenumbraSpread) * 1.1 + 50.0;
+  return distSq <= maxPerpDist * maxPerpDist;
+}
+
+/**
+ * Evaluates the celestial shadow factor (0.04 to 1.0) at a specific world position on the CPU.
+ * Used for dimming ambient sky light and triggering lighting hints during totality.
+ *
+ * @param {THREE.Vector3} worldPos World position (e.g. camera or player position)
+ * @param {Object} shadowUniforms Material userData.shadowUniforms object
+ * @returns {number} Shadow factor (1.0 = full light, 0.04 = deep totality)
+ */
+export function getCelestialShadowFactor(worldPos, shadowUniforms) {
+  if (!shadowUniforms) return 1.0;
+  const count = shadowUniforms.uOccluderCount?.value || 0;
+  const hasRings = shadowUniforms.uHasRings?.value || 0;
+  if (count === 0 && hasRings === 0) return 1.0;
+
+  const sunPos = shadowUniforms.uSunPosition.value;
+  const sunRadius = shadowUniforms.uSunRadius?.value || 8000;
+
+  _scratchToSun.subVectors(sunPos, worldPos);
+  const dSun = _scratchToSun.length();
+  if (dSun < 1.0) return 1.0;
+  _scratchSunDir.copy(_scratchToSun).divideScalar(dSun);
+
+  let shadow = 1.0;
+  const occluders = shadowUniforms.uOccluders?.value;
+
+  for (let i = 0; i < count && i < 4; i++) {
+    const occ = occluders[i];
+    const occRadius = occ.w;
+    if (occRadius <= 0.0) continue;
+
+    _scratchToOcc.set(occ.x, occ.y, occ.z).sub(worldPos);
+    const t = _scratchToOcc.dot(_scratchSunDir);
+    if (t > occRadius && t < dSun) {
+      const d2 = _scratchToOcc.lengthSq() - t * t;
+      const d = Math.sqrt(Math.max(0.0, d2));
+      const rSunProj = t * (sunRadius / dSun);
+      const rUmbra = Math.max(0.0, occRadius - rSunProj);
+      const rPenumbra = occRadius + rSunProj;
+
+      if (d < rPenumbra) {
+        const f = THREE.MathUtils.clamp((d - rUmbra) / Math.max(1e-4, rPenumbra - rUmbra), 0, 1);
+        const smoothF = f * f * (3 - 2 * f);
+        shadow = Math.min(shadow, THREE.MathUtils.lerp(0.04, 1.0, smoothF));
+      }
+    }
+  }
+
+  // Ring shadow on planet
+  if (hasRings > 0 && shadowUniforms.uPlanetCenter && shadowUniforms.uRingNormal) {
+    const pCenter = shadowUniforms.uPlanetCenter.value;
+    const rNormal = shadowUniforms.uRingNormal.value;
+    _scratchWorldToCenter.subVectors(worldPos, pCenter);
+    const h = _scratchWorldToCenter.dot(rNormal);
+    const dProj = _scratchSunDir.dot(rNormal);
+    if (Math.abs(dProj) > 1e-5) {
+      const tPlane = -h / dProj;
+      if (tPlane > 0.0 && tPlane < dSun) {
+        _scratchHitPos.copy(worldPos).addScaledVector(_scratchSunDir, tPlane);
+        const rHit = _scratchHitPos.distanceTo(pCenter);
+        const inner = shadowUniforms.uRingInner?.value || 0;
+        const outer = shadowUniforms.uRingOuter?.value || 0;
+        if (rHit >= inner && rHit <= outer) {
+          const ringWidth = Math.max(1.0, outer - inner);
+          const f1 = THREE.MathUtils.clamp((rHit - inner) / (ringWidth * 0.03), 0, 1);
+          const f2 = THREE.MathUtils.clamp((outer - rHit) / (ringWidth * 0.03), 0, 1);
+          const ringFade = (f1 * f1 * (3 - 2 * f1)) * (f2 * f2 * (3 - 2 * f2));
+          shadow = Math.min(shadow, THREE.MathUtils.lerp(1.0, 0.12, ringFade * 0.88));
+        }
+      }
+    }
+  }
+
+  return shadow;
+}
+
 /**
  * Updates all celestial shadow uniforms per frame. Call after updating orbits.
+ * Automatically performs CPU culling so unaligned moons incur zero GPU fragment cost.
+ *
  * @param {Object} systemMeshes
  * @param {Object} systemData
  */
@@ -246,6 +378,7 @@ export function updateCelestialShadows(systemMeshes, systemData) {
     }
     if (entry.mesh?.material) pMaterials.push(entry.mesh.material);
     if (entry.cloudMesh?.material) pMaterials.push(entry.cloudMesh.material);
+    if (entry.atmoMesh?.material) pMaterials.push(entry.atmoMesh.material);
 
     // Ring properties
     const hasRings = !!(entry.data.hasRings && entry.data.ringProps && entry.ringMesh);
@@ -258,19 +391,31 @@ export function updateCelestialShadows(systemMeshes, systemData) {
       _ringNormal.set(0, 0, 1).applyQuaternion(_axisQuat).normalize();
     }
 
+    // CPU culling for planet: only add moons that can geometrically shadow the planet or atmosphere
+    let pOccCount = 0;
+    for (let m = 0; m < moonCount; m++) {
+      const moon = moons[m];
+      if (moon.mesh) {
+        moon.mesh.getWorldPosition(_moonPos);
+        const moonRadius = moon.data.radius;
+        if (canOccluderShadowReceiver(_planetPos, pRadius * 1.15, _moonPos, moonRadius, _starPos, starRadius)) {
+          if (pOccCount < 4) {
+            _occScratch[pOccCount].set(_moonPos.x, _moonPos.y, _moonPos.z, moonRadius);
+            pOccCount++;
+          }
+        }
+      }
+    }
+
     for (let mIdx = 0; mIdx < pMaterials.length; mIdx++) {
       const mat = pMaterials[mIdx];
       const u = mat.userData?.shadowUniforms;
       if (!u) continue;
       u.uSunPosition.value.copy(_starPos);
       u.uSunRadius.value = starRadius;
-      u.uOccluderCount.value = moonCount;
-      for (let m = 0; m < moonCount; m++) {
-        const moon = moons[m];
-        if (moon.mesh) {
-          moon.mesh.getWorldPosition(_moonPos);
-          u.uOccluders.value[m].set(_moonPos.x, _moonPos.y, _moonPos.z, moon.data.radius);
-        }
+      u.uOccluderCount.value = pOccCount;
+      for (let o = 0; o < pOccCount; o++) {
+        u.uOccluders.value[o].copy(_occScratch[o]);
       }
       u.uHasRings.value = hasRings ? 1 : 0;
       if (hasRings) {
@@ -292,9 +437,38 @@ export function updateCelestialShadows(systemMeshes, systemData) {
       }
     }
 
-    // Planet shadow on each moon (lunar eclipse)
+    // Shadows on each moon: test parent planet AND sibling moons
     for (let m = 0; m < moons.length; m++) {
       const moon = moons[m];
+      if (!moon.mesh) continue;
+      moon.mesh.getWorldPosition(_moonPos);
+      const moonRadius = moon.data.radius;
+
+      let mOccCount = 0;
+
+      // 1. Parent planet occluder (lunar eclipse)
+      if (canOccluderShadowReceiver(_moonPos, moonRadius, _planetPos, pRadius, _starPos, starRadius)) {
+        if (mOccCount < 4) {
+          _occScratch[mOccCount].set(_planetPos.x, _planetPos.y, _planetPos.z, pRadius);
+          mOccCount++;
+        }
+      }
+
+      // 2. Sibling moon occluders (moon-on-moon eclipse)
+      for (let s = 0; s < moons.length; s++) {
+        if (s === m) continue;
+        const sibling = moons[s];
+        if (!sibling.mesh) continue;
+        sibling.mesh.getWorldPosition(_siblingPos);
+        const siblingRadius = sibling.data.radius;
+        if (canOccluderShadowReceiver(_moonPos, moonRadius, _siblingPos, siblingRadius, _starPos, starRadius)) {
+          if (mOccCount < 4) {
+            _occScratch[mOccCount].set(_siblingPos.x, _siblingPos.y, _siblingPos.z, siblingRadius);
+            mOccCount++;
+          }
+        }
+      }
+
       const mMaterials = [];
       if (moon.mesh?.material) mMaterials.push(moon.mesh.material);
       if (moon.terrainLOD) {
@@ -306,8 +480,10 @@ export function updateCelestialShadows(systemMeshes, systemData) {
         if (!mu) continue;
         mu.uSunPosition.value.copy(_starPos);
         mu.uSunRadius.value = starRadius;
-        mu.uOccluderCount.value = 1;
-        mu.uOccluders.value[0].set(_planetPos.x, _planetPos.y, _planetPos.z, pRadius);
+        mu.uOccluderCount.value = mOccCount;
+        for (let o = 0; o < mOccCount; o++) {
+          mu.uOccluders.value[o].copy(_occScratch[o]);
+        }
         mu.uHasRings.value = 0;
       }
     }

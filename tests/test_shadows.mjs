@@ -3,7 +3,9 @@ import {
   createShadowUniforms,
   createRingShadowUniforms,
   applyCelestialShadows,
-  updateCelestialShadows
+  updateCelestialShadows,
+  canOccluderShadowReceiver,
+  getCelestialShadowFactor
 } from '../src/visuals/shadows.js';
 import { ShipContactShadow } from '../src/visuals/shipShadow.js';
 import { generateSolarSystemData, buildSolarSystemMeshes } from '../src/systems/solarSystemGenerator.js';
@@ -43,6 +45,45 @@ console.log('\n[Celestial Shadows & Uniforms]');
   assert(ringMat.customProgramCacheKey().includes('celestialRingShadow'), 'customProgramCacheKey distinguishes ring shadows');
 }
 
+console.log('\n[CPU Occluder Culling & Calculations]');
+
+{
+  const sunPos = new THREE.Vector3(0, 0, 50000);
+  const sunRadius = 8000;
+  const planetPos = new THREE.Vector3(0, 0, 0);
+  const planetRadius = 1000;
+
+  // 1. Moon directly between planet and sun -> can shadow
+  const moonInFront = new THREE.Vector3(0, 0, 3000);
+  const canShadow1 = canOccluderShadowReceiver(planetPos, planetRadius, moonInFront, 150, sunPos, sunRadius);
+  assert(canShadow1 === true, 'Moon directly between planet and sun correctly detected as occluder');
+
+  // 2. Moon on night side of planet (away from sun) -> culled
+  const moonBehind = new THREE.Vector3(0, 0, -3000);
+  const canShadow2 = canOccluderShadowReceiver(planetPos, planetRadius, moonBehind, 150, sunPos, sunRadius);
+  assert(canShadow2 === false, 'Moon behind planet (night side) correctly culled on CPU');
+
+  // 3. Moon far off to the side -> culled
+  const moonOffSide = new THREE.Vector3(15000, 0, 3000);
+  const canShadow3 = canOccluderShadowReceiver(planetPos, planetRadius, moonOffSide, 150, sunPos, sunRadius);
+  assert(canShadow3 === false, 'Moon far off line of sight correctly culled on CPU');
+
+  // 4. getCelestialShadowFactor: unshadowed position
+  const uniforms = createShadowUniforms();
+  uniforms.uSunPosition.value.copy(sunPos);
+  uniforms.uSunRadius.value = sunRadius;
+  uniforms.uOccluderCount.value = 0;
+  const factorFull = getCelestialShadowFactor(new THREE.Vector3(0, 0, 1000), uniforms);
+  assert(factorFull === 1.0, 'getCelestialShadowFactor returns 1.0 when no occluders are present');
+
+  // 5. getCelestialShadowFactor: point under deep umbra
+  uniforms.uOccluderCount.value = 1;
+  uniforms.uOccluders.value[0].set(0, 0, 3000, 150);
+  // Receiver right behind the moon on the line towards sun
+  const factorUmbra = getCelestialShadowFactor(new THREE.Vector3(0, 0, 2000), uniforms);
+  assert(factorUmbra < 0.1, `getCelestialShadowFactor returns deep totality (${factorUmbra.toFixed(3)}) under umbra`);
+}
+
 console.log('\n[System Shadow Update Integration]');
 
 {
@@ -63,21 +104,51 @@ console.log('\n[System Shadow Update Integration]');
     assert(!isNaN(sunPos.x) && !isNaN(sunPos.y) && !isNaN(sunPos.z), 'Sun position is finite vector in shadow uniforms');
   }
 
-  // Find a planet with moons and check occluders
-  const planetWithMoons = systemMeshes.planetEntries.find(p => p.moons && p.moons.length > 0);
-  if (planetWithMoons) {
-    const pMat = planetWithMoons.terrainLOD?.material || planetWithMoons.mesh?.material;
-    const u = pMat.userData.shadowUniforms;
-    assert(u.uOccluderCount.value === planetWithMoons.moons.length, `Occluder count (${u.uOccluderCount.value}) matches moon count (${planetWithMoons.moons.length})`);
-    assert(u.uOccluders.value[0].w > 0, 'First moon occluder has positive radius');
+  // Check atmosphere material received shadow uniforms
+  const planetWithAtmo = systemMeshes.planetEntries.find(p => p.atmoMesh && p.atmoMesh.material);
+  assert(planetWithAtmo !== undefined, 'Found planet with atmosphere mesh');
+  if (planetWithAtmo) {
+    const atmoUniforms = planetWithAtmo.atmoMesh.material.userData?.shadowUniforms;
+    assert(atmoUniforms !== undefined, 'Atmosphere material holds shadowUniforms');
+    assert(atmoUniforms.uSunRadius.value > 0, 'Atmosphere shadowUniforms receives sun radius');
+  }
 
-    // Check moon lunar eclipse occluder (planet)
-    const moon = planetWithMoons.moons[0];
-    const moonMat = moon.terrainLOD?.material || moon.mesh?.material;
-    if (moonMat && moonMat.userData.shadowUniforms) {
-      assert(moonMat.userData.shadowUniforms.uOccluderCount.value === 1, 'Moon has 1 occluder (the planet)');
-      assert(moonMat.userData.shadowUniforms.uOccluders.value[0].w === planetWithMoons.data.radius, 'Moon occluder radius matches parent planet radius');
-    }
+  // Check moons receive parent planet or sibling moon occluders
+  const planetWithMoons = systemMeshes.planetEntries.find(p => p.moons && p.moons.length >= 2);
+  if (planetWithMoons) {
+    assert(planetWithMoons.moons.length >= 2, 'Found planet with at least 2 moons');
+
+    // Force sibling eclipse alignment: place Moon 1 directly between Moon 0 and the star
+    const starWorld = new THREE.Vector3();
+    systemMeshes.starMesh.getWorldPosition(starWorld);
+    const m0Mesh = planetWithMoons.moons[0].mesh;
+    const m1Mesh = planetWithMoons.moons[1].mesh;
+
+    const m0World = new THREE.Vector3();
+    m0Mesh.getWorldPosition(m0World);
+    const dirToStar = new THREE.Vector3().subVectors(starWorld, m0World).normalize();
+
+    // Place m1 300 units in front of m0 towards the star
+    const m1TargetWorld = new THREE.Vector3().copy(m0World).addScaledVector(dirToStar, 300);
+    planetWithMoons.group.worldToLocal(m1TargetWorld);
+    m1Mesh.position.copy(m1TargetWorld);
+
+    m0Mesh.updateMatrixWorld(true);
+    m1Mesh.updateMatrixWorld(true);
+
+    updateCelestialShadows(systemMeshes, systemData);
+
+    const m0Mat = planetWithMoons.moons[0].terrainLOD?.material || planetWithMoons.moons[0].mesh?.material;
+    const m0Uniforms = m0Mat?.userData?.shadowUniforms;
+    assert(m0Uniforms !== undefined, 'Moon material has shadow uniforms');
+    assert(m0Uniforms.uOccluderCount.value >= 1, 'Moon 0 detected occluder when sibling moon is in front of sun');
+
+    // Check that the occluder position matches the sibling moon
+    const occPos = m0Uniforms.uOccluders.value[0];
+    const m1World = new THREE.Vector3();
+    m1Mesh.getWorldPosition(m1World);
+    const distToSibling = m1World.distanceTo(new THREE.Vector3(occPos.x, occPos.y, occPos.z));
+    assert(distToSibling < 1.0, 'Sibling moon accurately registered as occluder on recipient moon');
   }
 }
 
