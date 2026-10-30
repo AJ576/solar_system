@@ -13,6 +13,8 @@ import { getTerrainAltitude } from './terrain/terrainCollision.js';
 import { getSolidSurfaceHeight, getSurfaceNormal } from './terrain/terrainGenerator.js';
 import { OnFootController } from './player/onFoot.js';
 import { AudioManager } from './audio/audioManager.js';
+import { updateCelestialShadows } from './visuals/shadows.js';
+import { ShipContactShadow } from './visuals/shipShadow.js';
 
 // G lands the ship below this altitude and speed
 const ASSIST_ALTITUDE = 3;
@@ -49,6 +51,7 @@ export class Game {
 
     this.spaceship = createSpaceship();
     this.scene.add(this.spaceship.mesh);
+    this.shipShadow = new ShipContactShadow(this.scene);
     this.controls = new SpaceshipControls(this.spaceship, this.camera, this.canvas);
     this.controls.onEvent = (type, detail) => this.onFlightEvent(type, detail);
     this.onFoot = new OnFootController(this.camera, this.canvas);
@@ -163,6 +166,7 @@ export class Game {
 
     // Initialize terrain LOD for the initial viewpoint
     this.updateTerrainLODs();
+    updateCelestialShadows(this.systemMeshes, this.systemData);
   }
 
   updateTerrainLODs() {
@@ -458,6 +462,7 @@ export class Game {
     updateOrbits(this.systemMeshes, this.systemData, 0, 0);
     this.bodies.setSystem(newSystemData, newSystemMeshes);
     this.hyperspace.setCurrentSystem(newSystemData, newSystemMeshes);
+    if (this.shipShadow?.mesh) this.shipShadow.mesh.visible = false;
     this.enterSystem();
     this.hud.showNotification(`Arrived at ${newSystemData.name}`, 3500);
   }
@@ -517,6 +522,7 @@ export class Game {
     // A. Move the bodies
     updateOrbits(this.systemMeshes, this.systemData, delta, this.totalSimTime);
     this.bodies.sample();
+    updateCelestialShadows(this.systemMeshes, this.systemData);
 
     let frameBody = null;
     let nearest = null;
@@ -584,6 +590,8 @@ export class Game {
     }
     this.updateTerrainLODs();
     this._updateLights(nearest);
+    const starPos = this.systemMeshes?.starLight?.position || this.systemMeshes?.starMesh?.position;
+    this.shipShadow.update(ship, nearest, starPos, this.mode === 'landed' || this.mode === 'foot');
     this.hyperspace.update(delta);
     this.spaceDust.lines.visible = this.mode === 'flight';
     this.spaceDust.update(ship.position, this.controls.velocity, this.controls.isBoosting, delta);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { applyCelestialShadows } from '../visuals/shadows.js';
 
 // Cheap 3D value noise shared by the terrain and lava shaders
 const GLSL_VALUE_NOISE = /* glsl */`
@@ -80,6 +81,7 @@ export function createTerrainMaterial(profile) {
     );
   };
 
+  applyCelestialShadows(material);
   return material;
 }
 
@@ -109,13 +111,15 @@ export function createLiquidMaterial(profile) {
 
   if (profile.seaSurface === 'water') {
     // Translucent so the shallow seabed colors show through near coasts
-    return new THREE.MeshStandardMaterial({
+    const mat = new THREE.MeshStandardMaterial({
       color: profile.liquid.color,
       roughness: 0.16,
       metalness: 0.0,
       transparent: true,
       opacity: profile.liquid.opacity ?? 0.8
     });
+    applyCelestialShadows(mat);
+    return mat;
   }
 
   const mat = new THREE.MeshStandardMaterial({
@@ -145,6 +149,7 @@ export function createLiquidMaterial(profile) {
       totalEmissiveRadiance *= (1.0 - smoothstep(0.35, 0.75, crust)) * 0.9 + 0.1;`
     );
   };
+  applyCelestialShadows(mat);
   return mat;
 }
 

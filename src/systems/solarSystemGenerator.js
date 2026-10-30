@@ -12,6 +12,7 @@ import { getTerrainProfile } from '../terrain/terrainProfiles.js';
 import { PlanetTerrain } from '../terrain/terrainLOD.js';
 import { AsteroidBelt } from './asteroidBelt.js';
 import { createAtmosphere } from '../visuals/atmosphere.js';
+import { applyCelestialShadows } from '../visuals/shadows.js';
 
 /**
  * World scale: 1 unit = 100 m (see utils/scale.js). The ship is ~0.27 u long, so a
@@ -409,6 +410,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
       roughness: planetData.roughness,
       metalness: planetData.metalness
     });
+    applyCelestialShadows(planetMat);
 
     const planetMesh = new THREE.Mesh(planetGeo, planetMat);
     planetMesh.name = `Planet_${planetData.name}`;
@@ -426,6 +428,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
         roughness: 1.0,
         depthWrite: false
       });
+      applyCelestialShadows(cloudMat);
       cloudMesh = new THREE.Mesh(cloudGeo, cloudMat);
       cloudMesh.renderOrder = 1;
       axisGroup.add(cloudMesh);
@@ -440,6 +443,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
       planetGroup.add(atmoMesh);
     }
 
+    let ringMesh = null;
     if (planetData.hasRings && planetData.ringProps) {
       const { innerRadius, outerRadius, color } = planetData.ringProps;
       const ringGeo = new THREE.RingGeometry(innerRadius, outerRadius, 256, 1);
@@ -463,7 +467,8 @@ export function buildSolarSystemMeshes(systemData, scene) {
         metalness: 0.0,
         depthWrite: false
       });
-      const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+      applyCelestialShadows(ringMat, true);
+      ringMesh = new THREE.Mesh(ringGeo, ringMat);
       ringMesh.name = `Ring_${planetData.name}`;
       ringMesh.rotation.x = Math.PI / 2 + (planetData.ringTilt || 0);
       axisGroup.add(ringMesh);
@@ -474,7 +479,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
       terrainLOD = new PlanetTerrain(planetData, planetMesh, planetData.terrainProfile);
     }
 
-    planetMesh.userData = { ...planetData, cloudMesh, terrainLOD };
+    planetMesh.userData = { ...planetData, cloudMesh, terrainLOD, ringMesh };
 
     // Moons orbit the non-rotating planet frame
     const moonEntries = [];
@@ -488,6 +493,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
         roughness: 0.92,
         metalness: 0.0
       });
+      applyCelestialShadows(moonMat);
       const moonMesh = new THREE.Mesh(moonGeo, moonMat);
       moonMesh.name = `Moon_${moonData.name}`;
 
@@ -508,6 +514,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
       mesh: planetMesh,
       terrainLOD,
       cloudMesh,
+      ringMesh,
       orbitLine,
       moons: moonEntries
     });
