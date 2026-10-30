@@ -81,7 +81,7 @@ export class AsteroidBelt {
         anchor.add(m);
         return m;
       });
-      return { cfg, anchor, meshes, cell: null, rocks: [] };
+      return { cfg, anchor, meshes, cell: null, rocks: [], cellRocks: new Map() };
     });
 
     this._m = new THREE.Matrix4();
@@ -90,6 +90,7 @@ export class AsteroidBelt {
     this._s = new THREE.Vector3();
     this._e = new THREE.Euler();
     this._c = new THREE.Color();
+    this._hitNormal = new THREE.Vector3();
     this._baseColor = new THREE.Color(data.color);
   }
 
@@ -166,6 +167,7 @@ export class AsteroidBelt {
         if (layer.cell !== null) {
           layer.cell = null;
           layer.rocks = [];
+          layer.cellRocks.clear();
           for (const m of layer.meshes) m.count = 0;
         }
         continue;
@@ -189,6 +191,7 @@ export class AsteroidBelt {
     const perVariant = meshes[0].instanceMatrix.count;
     const counts = new Array(ROCK_VARIANTS).fill(0);
     layer.rocks = [];
+    layer.cellRocks.clear();
 
     for (let dx = -cfg.range; dx <= cfg.range; dx++) {
       for (let dy = -cfg.range; dy <= cfg.range; dy++) {
@@ -218,7 +221,15 @@ export class AsteroidBelt {
             counts[variant]++;
 
             // Collision sphere slightly inside the lumpy surface
-            layer.rocks.push({ x: px + ax, y: py + ay, z: pz + az, r: radius * 0.8 });
+            const rock = { x: px + ax, y: py + ay, z: pz + az, r: radius * 0.8 };
+            layer.rocks.push(rock);
+            const cellKey = `${x},${y},${z}`;
+            let bucket = layer.cellRocks.get(cellKey);
+            if (!bucket) {
+              bucket = [];
+              layer.cellRocks.set(cellKey, bucket);
+            }
+            bucket.push(rock);
           }
         }
       }
@@ -234,22 +245,45 @@ export class AsteroidBelt {
 
   /**
    * Pushes a ship sphere out of any rock it ended up inside.
+   * Spatial partition tests the ship's cell and its 26 immediate neighbor cells.
    * @returns {{ normal: THREE.Vector3 }|null}
    */
   resolveCollision(to, shipRadius) {
     const local = this._p.copy(to);
     this.group.worldToLocal(local);
     let hit = null;
-    for (const layer of this.layers) {
-      for (const rock of layer.rocks) {
-        const dx = local.x - rock.x, dy = local.y - rock.y, dz = local.z - rock.z;
-        const min = rock.r + shipRadius;
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 >= min * min) continue;
-        const d = Math.sqrt(d2);
-        const normal = d > 1e-6 ? new THREE.Vector3(dx / d, dy / d, dz / d) : new THREE.Vector3(0, 1, 0);
-        local.set(rock.x + normal.x * min, rock.y + normal.y * min, rock.z + normal.z * min);
-        hit = { normal };
+
+    for (let li = 0; li < this.layers.length; li++) {
+      const layer = this.layers[li];
+      if (!layer.cellRocks || layer.cellRocks.size === 0) continue;
+      const cs = layer.cfg.cellSize;
+      const scx = Math.floor(local.x / cs);
+      const scy = Math.floor(local.y / cs);
+      const scz = Math.floor(local.z / cs);
+
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const bucket = layer.cellRocks.get(`${scx + dx},${scy + dy},${scz + dz}`);
+            if (!bucket) continue;
+            for (let i = 0; i < bucket.length; i++) {
+              const rock = bucket[i];
+              const rdx = local.x - rock.x, rdy = local.y - rock.y, rdz = local.z - rock.z;
+              const min = rock.r + shipRadius;
+              const d2 = rdx * rdx + rdy * rdy + rdz * rdz;
+              if (d2 >= min * min) continue;
+              const d = Math.sqrt(d2);
+              if (d > 1e-6) {
+                this._hitNormal.set(rdx / d, rdy / d, rdz / d);
+              } else {
+                this._hitNormal.set(0, 1, 0);
+              }
+              local.set(rock.x + this._hitNormal.x * min, rock.y + this._hitNormal.y * min, rock.z + this._hitNormal.z * min);
+              if (!hit) hit = { normal: new THREE.Vector3() };
+              hit.normal.copy(this._hitNormal);
+            }
+          }
+        }
       }
     }
     if (hit) {

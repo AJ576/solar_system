@@ -12,6 +12,7 @@ import { HUD } from './ui/hud.js';
 import { getTerrainAltitude } from './terrain/terrainCollision.js';
 import { getSolidSurfaceHeight, getSurfaceNormal } from './terrain/terrainGenerator.js';
 import { OnFootController } from './player/onFoot.js';
+import { AudioManager } from './audio/audioManager.js';
 
 // G lands the ship below this altitude and speed
 const ASSIST_ALTITUDE = 3;
@@ -23,6 +24,9 @@ export class Game {
   constructor() {
     this.canvas = document.querySelector('canvas.threejs');
     this.hudContainer = document.getElementById('hud-container');
+
+    // 0. Audio Manager (Procedural SFX & Ambient Music)
+    this.audio = new AudioManager();
 
     // 1. Scene, camera, renderer. 1 u = 100 m; systems span a few hundred thousand units.
     this.scene = new THREE.Scene();
@@ -48,6 +52,8 @@ export class Game {
     this.controls = new SpaceshipControls(this.spaceship, this.camera, this.canvas);
     this.controls.onEvent = (type, detail) => this.onFlightEvent(type, detail);
     this.onFoot = new OnFootController(this.camera, this.canvas);
+    this.onFoot.onJump = () => this.audio.playJump();
+    this.onFoot.onLand = () => this.audio.playJumpLanding();
 
     // flight | landing (settling onto the ground) | landed | foot
     this.mode = 'flight';
@@ -89,7 +95,12 @@ export class Game {
       },
       onTargetNext: () => this.notifyTarget(this.targeting.selectNext()),
       onTargetPrev: () => this.notifyTarget(this.targeting.selectPrev()),
-      onTargetSelect: (id) => this.notifyTarget(this.targeting.selectById(id))
+      onTargetSelect: (id) => this.notifyTarget(this.targeting.selectById(id)),
+      onToggleAudio: () => {
+        const muted = this.audio.toggleMute();
+        this.hud.showNotification(muted ? 'Audio Muted' : 'Audio Unmuted', 1400);
+        return muted;
+      }
     });
 
     // 5. Hyperspace: swaps the system mid-warp and hands control back to us for placement
@@ -99,7 +110,8 @@ export class Game {
       this.controls,
       (newSystemData, newSystemMeshes) => this.onSystemChanged(newSystemData, newSystemMeshes),
       this.systemData,
-      this.systemMeshes
+      this.systemMeshes,
+      this.audio
     );
 
     this.enterSystem();
@@ -113,6 +125,7 @@ export class Game {
     this._v3 = new THREE.Vector3();
     this._q1 = new THREE.Quaternion();
     this._m1 = new THREE.Matrix4();
+    this._altScratch = { altitude: 0, surfaceRadius: 0, normal: new THREE.Vector3() };
 
     setTimeout(() => this.hud.showNotification(`Welcome to ${this.systemData.name}`, 3500), 400);
 
@@ -286,6 +299,7 @@ export class Game {
 
   /** Begins settling the ship onto the surface below it. */
   startLanding(body) {
+    this.audio.playLanding();
     const profile = body.terrainProfile;
     const mesh = this._bodyMesh(body);
     const ship = this.controls.ship;
@@ -345,6 +359,7 @@ export class Game {
   }
 
   takeOff() {
+    this.audio.playTakeoff();
     const { body, localPos } = this.parked;
     const mesh = this._bodyMesh(body);
     const up = this._v1.copy(localPos).normalize().transformDirection(mesh.matrixWorld);
@@ -360,6 +375,7 @@ export class Game {
   }
 
   stepOut() {
+    this.audio.playAirlock(false);
     const { body, localPos, localQuat } = this.parked;
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(localQuat);
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(localQuat);
@@ -372,6 +388,7 @@ export class Game {
   }
 
   board() {
+    this.audio.playAirlock(true);
     this.onFoot.exit();
     this.onFoot.setObstacle(null);
     this.controls._onBlur();
@@ -398,6 +415,11 @@ export class Game {
     if (e.code === 'KeyN') {
       this.lightsEnabled = !this.lightsEnabled;
       this.hud.showNotification(this.lightsEnabled ? 'Lights on' : 'Lights off', 1200);
+      this.audio.playLightSwitch(this.lightsEnabled);
+    } else if (e.code === 'KeyM') {
+      const muted = this.audio.toggleMute();
+      this.hud.showNotification(muted ? 'Audio Muted' : 'Audio Unmuted', 1400);
+      this.hud.setAudioMuted?.(muted);
     } else if (e.code === 'KeyG' && this.mode === 'flight') {
       const body = this._landingCandidate(this.bodies.findNearest(this.controls.ship.position));
       if (body) this.startLanding(body);
@@ -441,11 +463,15 @@ export class Game {
   }
 
   notifyTarget(body) {
-    if (body) this.hud.showNotification(`Target: ${body.name}`, 1600);
+    if (body) {
+      this.audio.playTargetSelect();
+      this.hud.showNotification(`Target: ${body.name}`, 1600);
+    }
   }
 
   onFlightEvent(type, detail) {
     if (type === 'cruise-spool') {
+      this.audio.playCruiseSpool?.();
       this.hud.showNotification('Cruise drive spooling…', 1400);
     } else if (type === 'cruise-engaged') {
       this.hud.showNotification('Cruise drive engaged', 1600);
@@ -521,6 +547,7 @@ export class Game {
       const hit = this.bodies.resolveCollision(this._prevShipPos, ship.position, this.controls.config.shipRadius);
       if (hit) {
         const impactSpeed = this.controls.applyImpact(hit.normal);
+        if (impactSpeed > 0.8) this.audio.playImpact(Math.min(1, impactSpeed / 30));
         if (impactSpeed > 3) this.hud.flashImpact(Math.min(1, impactSpeed / 60));
       }
       const belt = this.systemMeshes.asteroidBelt;
@@ -528,6 +555,7 @@ export class Game {
         const rockHit = belt.resolveCollision(ship.position, this.controls.config.shipRadius);
         if (rockHit) {
           const impactSpeed = this.controls.applyImpact(rockHit.normal);
+          if (impactSpeed > 0.8) this.audio.playImpact(Math.min(1, impactSpeed / 30));
           if (impactSpeed > 3) this.hud.flashImpact(Math.min(1, impactSpeed / 60));
         }
         const inBelt = belt.contains(ship.position);
@@ -561,6 +589,28 @@ export class Game {
     this.spaceDust.update(ship.position, this.controls.velocity, this.controls.isBoosting, delta);
     this.environment.update(this.camera.position, delta);
 
+    // Audio dynamic updates
+    const atmo = nearest?.body?.terrainProfile?.atmosphere;
+    const atmoDensity = atmo ? THREE.MathUtils.clamp(atmo.density, 0, 2.0) : 0;
+    this.audio.updateFlightAudio({
+      mode: this.mode,
+      throttle: this.controls.throttle,
+      speed: this.controls.velocity.length(),
+      isBoosting: this.controls.isBoosting,
+      cruiseSpool: this.controls.cruiseSpool,
+      isCruise: this.controls.mode === 'cruise',
+      atmoDensity,
+      altitude: nearest ? nearest.altitude : Infinity,
+      bodyRadius: nearest?.body ? nearest.body.radius : 1
+    });
+
+    if (this.mode === 'foot') {
+      const footSpeed = this.onFoot.getSpeed();
+      const isRunning = this.onFoot.keys.run;
+      const isGrounded = this.onFoot.grounded;
+      this.audio.updateFootsteps(footSpeed, isRunning, isGrounded, delta);
+    }
+
     // E. HUD
     const telemetry = this.controls.getTelemetry();
     if (this.mode === 'foot') {
@@ -589,9 +639,9 @@ export class Game {
     const center = body.position;
     const minClearance = 0.01;
     if (body.terrainProfile?.hasTerrain) {
-      const altQuery = getTerrainAltitude(body, camPos);
+      const altQuery = getTerrainAltitude(body, camPos, false, this._altScratch);
       if (altQuery.altitude < minClearance) {
-        const radial = new THREE.Vector3().subVectors(camPos, center);
+        const radial = this._v1.subVectors(camPos, center);
         if (radial.lengthSq() < 1e-6) radial.set(0, 1, 0);
         radial.normalize();
         camPos.copy(center).addScaledVector(radial, altQuery.surfaceRadius + minClearance);
@@ -601,7 +651,7 @@ export class Game {
       const dist = camPos.distanceTo(center);
       const reqDist = body.radius + minClearance;
       if (dist < reqDist) {
-        const radial = new THREE.Vector3().subVectors(camPos, center);
+        const radial = this._v1.subVectors(camPos, center);
         if (radial.lengthSq() < 1e-6) radial.set(0, 1, 0);
         radial.normalize();
         camPos.copy(center).addScaledVector(radial, reqDist);

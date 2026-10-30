@@ -155,7 +155,11 @@ export class PlanetTerrain {
     this.stats = { chunks: 0, visible: 0 };
 
     this.roots = CUBE_FACES.map((_, f) => this._makeNode(f, -1, -1, 2, 0));
-    for (const root of this.roots) this._buildSync(root);
+    for (const root of this.roots) {
+      this._buildSync(root);
+      this._setVisible(root, true);
+    }
+    this._isCollapsed = false;
   }
 
   _makeNode(face, u0, v0, size, level) {
@@ -315,11 +319,21 @@ export class PlanetTerrain {
     this.mesh.updateWorldMatrix(true, false);
     this._camLocal.copy(cameraPosition);
     this.mesh.worldToLocal(this._camLocal);
+    const camDist = this._camLocal.length();
+
+    // Distance gating: if camera is far from the body (root chunks only split within ~3.5 * radius),
+    // and the quadtree is already collapsed to its root nodes, skip traversal entirely.
+    if (camDist > this.radius * 4.5 && this._isCollapsed) {
+      return;
+    }
+
     this._camDir.copy(this._camLocal).normalize();
 
     this._requests.length = 0;
     this.stats.visible = 0;
     for (const root of this.roots) this._updateNode(root, this._camLocal);
+
+    this._isCollapsed = !this.roots.some((r) => r.children !== null);
 
     this._requests.sort((a, b) => a.dist - b.dist);
 

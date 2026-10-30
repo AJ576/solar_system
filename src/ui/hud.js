@@ -123,6 +123,7 @@ const HELP_GROUPS = [
       [['R'], 'Target the body nearest the crosshair'],
       [['L'], 'Target list'],
       [['H'], 'Hyperspace jump (uses the seed field, or a random seed)'],
+      [['M'], 'Mute / unmute audio & ambient music'],
       [['F1', '?'], 'Show / hide this help'],
     ],
   },
@@ -173,6 +174,7 @@ const TEMPLATE = `
     <input class="hud-input" data-ref="seedInput" type="text" placeholder="Seed" spellcheck="false" autocomplete="off" maxlength="40" aria-label="System seed" />
     <button class="hud-btn hud-btn--primary" data-ref="btnJump" title="Jump to seed (H)">Jump</button>
     <button class="hud-btn" data-ref="btnRandom" title="Jump to a random system">Random</button>
+    <button class="hud-btn hud-btn--icon" data-ref="btnAudio" title="Mute / unmute audio (M)" aria-label="Toggle Audio">🔊</button>
     <button class="hud-btn hud-btn--icon" data-ref="btnHelp" title="Controls (F1)" aria-label="Controls">?</button>
   </div>
 
@@ -336,6 +338,12 @@ export class HUD {
 
     e.btnJump.addEventListener('click', () => this._triggerJump(false));
     e.btnRandom.addEventListener('click', () => this._triggerJump(true));
+    e.btnAudio?.addEventListener('click', () => {
+      if (typeof this.callbacks.onToggleAudio === 'function') {
+        const muted = this.callbacks.onToggleAudio();
+        this.setAudioMuted(muted);
+      }
+    });
     e.btnHelp.addEventListener('click', () => this._setHelp(!this._helpOpen));
     e.btnHelpClose.addEventListener('click', () => this._setHelp(false));
     e.help.addEventListener('click', (ev) => {
@@ -577,6 +585,13 @@ export class HUD {
     this._impactLevel = Math.max(current, 0.25 + 0.75 * s);
     this._impactTime = now;
     if (this.el) this.el.impact.style.opacity = this._impactLevel.toFixed(3);
+  }
+
+  setAudioMuted(muted) {
+    if (this.el && this.el.btnAudio) {
+      this.el.btnAudio.textContent = muted ? '🔇' : '🔊';
+      this.el.btnAudio.title = muted ? 'Unmute Audio (M)' : 'Mute Audio (M)';
+    }
   }
 
   dispose() {

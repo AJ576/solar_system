@@ -6,12 +6,16 @@ import * as THREE from 'three';
  * Safe for headless execution (returns null when document/canvas is unavailable).
  */
 
-// Simple 2D Value Noise generator for procedural synthesis
+// High-performance 2D Value Noise generator for procedural synthesis.
+// Uses fast 32-bit integer bit-mixing instead of Math.sin to eliminate tens of millions
+// of transcendental trigonometric evaluations per generated texture.
 function createNoise2D(seed = 12345) {
-  let s = seed >>> 0;
+  const s = seed >>> 0;
   function hash(x, y) {
-    let n = Math.sin(x * 12.9898 + y * 78.233 + s * 0.01) * 43758.5453;
-    return n - Math.floor(n);
+    let h = (Math.imul(x, 0x1b873593) ^ Math.imul(y, 0x85ebca6b) ^ s) >>> 0;
+    h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+    h = Math.imul(h ^ (h >>> 15), 0x45d9f3b);
+    return ((h ^ (h >>> 16)) >>> 0) * (1.0 / 4294967296.0);
   }
 
   return function (x, y) {
@@ -69,6 +73,8 @@ export function createGasGiantTexture(primaryColorHex, secondaryColorHex, seed =
   const colB = new THREE.Color(secondaryColorHex);
   const colDark = colA.clone().multiplyScalar(0.45);
   const colLight = colB.clone().lerp(new THREE.Color(0xffffff), 0.35);
+  const stormCol = colLight.clone().lerp(new THREE.Color(0xff4422), 0.6);
+  const pixelCol = new THREE.Color();
 
   const imgData = ctx.createImageData(width, height);
   const data = imgData.data;
@@ -93,7 +99,7 @@ export function createGasGiantTexture(primaryColorHex, secondaryColorHex, seed =
       const bandVal = (bandBase + Math.sin(ny * Math.PI * 4.0) * 0.5 + turbulence + 1.0) * 0.5;
 
       // Base interpolation between colA and colB
-      const pixelCol = colA.clone().lerp(colB, THREE.MathUtils.clamp(bandVal, 0, 1));
+      pixelCol.copy(colA).lerp(colB, THREE.MathUtils.clamp(bandVal, 0, 1));
 
       // Jet stream shear contrast
       const shear = Math.abs(fbm(nx * 14.0, ny * 20.0) - 0.5) * 2.0;
@@ -110,7 +116,6 @@ export function createGasGiantTexture(primaryColorHex, secondaryColorHex, seed =
       if (distSq < 1.0) {
         const stormFade = 1.0 - Math.sqrt(distSq);
         const spiral = fbm(dx * 4.0 + Math.atan2(dy, dx), dy * 4.0);
-        const stormCol = colLight.clone().lerp(new THREE.Color(0xff4422), 0.6);
         pixelCol.lerp(stormCol, stormFade * (0.6 + spiral * 0.4));
       }
 
@@ -157,6 +162,8 @@ export function createTerrestrialTexture(planetType, primaryColorHex, seed = 77)
   const landLow = new THREE.Color(primaryColorHex);
   const landHigh = landLow.clone().multiplyScalar(0.7).lerp(new THREE.Color(0x8a7960), 0.5);
   const polarIce = new THREE.Color(0xf0f8ff);
+  const desertBasin = landLow.clone().multiplyScalar(0.65);
+  const pixelCol = new THREE.Color();
 
   const seaLevel = planetType === 'Ocean' ? 0.48 : (planetType === 'Desert' ? 0.15 : 0.42);
 
@@ -170,8 +177,6 @@ export function createTerrestrialTexture(planetType, primaryColorHex, seed = 77)
       // Spherical projection approximation for noise
       const elev = fbm(nx * 4.0, ny * 2.5);
 
-      let pixelCol = new THREE.Color();
-
       // Polar Ice Caps
       const polarThreshold = 0.82 + fbm(nx * 8.0, 0) * 0.08;
       if (lat > polarThreshold) {
@@ -180,7 +185,7 @@ export function createTerrestrialTexture(planetType, primaryColorHex, seed = 77)
         // Ocean / Waters
         if (planetType === 'Desert') {
           // Desert dry basin
-          pixelCol.copy(landLow).multiplyScalar(0.65);
+          pixelCol.copy(desertBasin);
         } else {
           const depthRatio = elev / seaLevel;
           pixelCol.copy(oceanDeep).lerp(oceanShallow, depthRatio);
@@ -232,6 +237,8 @@ export function createCrateredTexture(baseColorHex, seed = 99) {
   const baseCol = new THREE.Color(baseColorHex);
   const darkMaria = baseCol.clone().multiplyScalar(0.55);
   const lightHighland = baseCol.clone().lerp(new THREE.Color(0xdde3ea), 0.45);
+  const whiteCol = new THREE.Color(0xffffff);
+  const pixelCol = new THREE.Color();
 
   const imgData = ctx.createImageData(width, height);
   const data = imgData.data;
@@ -242,12 +249,12 @@ export function createCrateredTexture(baseColorHex, seed = 99) {
       const nx = x / width;
 
       const n = fbm(nx * 5.0, ny * 3.0);
-      const pixelCol = darkMaria.clone().lerp(lightHighland, n);
+      pixelCol.copy(darkMaria).lerp(lightHighland, n);
 
       // Micro-crater ring highlights
       const micro = Math.abs(fbm(nx * 18.0, ny * 18.0) - 0.5) * 2.0;
       if (micro > 0.85) {
-        pixelCol.lerp(new THREE.Color(0xffffff), 0.3);
+        pixelCol.lerp(whiteCol, 0.3);
       }
 
       const idx = (y * width + x) * 4;
@@ -392,6 +399,7 @@ export function createStarPhotosphereTexture(starColorHex, seed = 12) {
   const baseCol = new THREE.Color(starColorHex);
   const hotCore = baseCol.clone().lerp(new THREE.Color(0xffffff), 0.7);
   const darkFilament = baseCol.clone().multiplyScalar(0.7);
+  const pixelCol = new THREE.Color();
 
   const imgData = ctx.createImageData(width, height);
   const data = imgData.data;
@@ -403,7 +411,7 @@ export function createStarPhotosphereTexture(starColorHex, seed = 12) {
 
       // High-frequency convective plasma granulation cells
       const gran = fbm(nx * 16.0, ny * 10.0);
-      const pixelCol = darkFilament.clone().lerp(hotCore, gran);
+      pixelCol.copy(darkFilament).lerp(hotCore, gran);
 
       const idx = (y * width + x) * 4;
       data[idx] = Math.round(pixelCol.r * 255);

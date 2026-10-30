@@ -216,9 +216,11 @@ export class OnFootController {
     } else {
       vUp -= this.gravity * dt;
     }
+    const wasGrounded = this.grounded;
     if (k.jump && (this.grounded || this.swimming)) {
       vUp = PLAYER_JUMP_SPEED;
       this.grounded = false;
+      this.onJump?.();
     }
 
     this.velocity.copy(horizontal).addScaledVector(up, vUp);
@@ -233,6 +235,9 @@ export class OnFootController {
       this.position.copy(newUp).multiplyScalar(groundR);
       const vr = this.velocity.dot(newUp);
       if (vr < 0) this.velocity.addScaledVector(newUp, -vr);
+      if (!wasGrounded) {
+        this.onLand?.();
+      }
       this.grounded = true;
     } else {
       this.grounded = false;

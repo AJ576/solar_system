@@ -159,8 +159,9 @@ export class HyperspaceManager {
    * @param {Function} onSystemChanged - Callback invoked when a new solar system is loaded
    * @param {Object} [initialSystemData=null] - Optional initial system data
    * @param {Object} [initialSystemMeshes=null] - Optional initial system meshes
+   * @param {Object} [audioManager=null] - Optional shared audio manager
    */
-  constructor(scene, camera, spaceshipControls, onSystemChanged, initialSystemData = null, initialSystemMeshes = null) {
+  constructor(scene, camera, spaceshipControls, onSystemChanged, initialSystemData = null, initialSystemMeshes = null, audioManager = null) {
     this.scene = scene;
     this.camera = camera;
     this.spaceshipControls = spaceshipControls;
@@ -182,7 +183,8 @@ export class HyperspaceManager {
     this.lastShakeOffset = new THREE.Vector3();
 
     // Audio SFX Synthesizer
-    this.audio = new HyperspaceAudio();
+    this._externalAudio = !!audioManager;
+    this.audio = audioManager || new HyperspaceAudio();
 
     // Hyperspace Visuals (Star Streaks & Warp Tunnel)
     this.initVisualEffects();
@@ -738,7 +740,7 @@ export class HyperspaceManager {
     }
 
     // Dispose Audio
-    if (this.audio) {
+    if (this.audio && !this._externalAudio) {
       this.audio.dispose();
     }
   }

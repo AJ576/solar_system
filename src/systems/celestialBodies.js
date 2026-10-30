@@ -26,6 +26,9 @@ export class CelestialBodies {
     this._qIdentity = new THREE.Quaternion();
     this._scratchPos = new THREE.Vector3();
     this._scratchScale = new THREE.Vector3();
+    this._altScratch = { altitude: 0, surfaceRadius: 0, normal: new THREE.Vector3() };
+    this._scratchRadial = new THREE.Vector3();
+    this._scratchClosest = new THREE.Vector3();
     if (systemData) this.setSystem(systemData, systemMeshes);
   }
 
@@ -217,15 +220,37 @@ export class CelestialBodies {
    * @returns {{ body: Object, altitude: number }|null}
    */
   findNearest(pos) {
-    let best = null;
-    let bestAlt = Infinity;
-    for (const b of this.bodies) {
+    if (this.bodies.length === 0) return null;
+
+    // Phase 1: Fast spherical lower/upper bound check across all bodies
+    let minUpper = Infinity;
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
       const centerDist = pos.distanceTo(b.position);
       const approxAlt = centerDist - b.radius;
+      // Deepest possible basin depth below nominal sphere radius
+      const minElev = b.terrainProfile?.hasTerrain ? Math.min(0, b.terrainProfile.minElevation || 0) : 0;
+      const upper = approxAlt - minElev;
+      if (upper < minUpper) {
+        minUpper = upper;
+      }
+    }
 
-      let alt = approxAlt;
-      if (b.terrainProfile?.hasTerrain && approxAlt < b.radius * 2.5) {
-        alt = getTerrainAltitude(b, pos).altitude;
+    // Phase 2: High-precision terrain altitude for any candidate whose lowest possible
+    // surface distance could be less than or equal to minUpper
+    let best = null;
+    let bestAlt = Infinity;
+
+    for (let i = 0; i < this.bodies.length; i++) {
+      const b = this.bodies[i];
+      const centerDist = pos.distanceTo(b.position);
+      const approxAlt = centerDist - b.radius;
+      const maxElev = b.terrainProfile?.hasTerrain ? Math.max(0, b.terrainProfile.maxElevation || 0) * 1.25 : 0;
+      const lower = approxAlt - maxElev;
+
+      let alt;
+      if (b.terrainProfile?.hasTerrain && lower <= minUpper && approxAlt < b.radius * 2.5) {
+        alt = getTerrainAltitude(b, pos, false, this._altScratch).altitude;
       } else {
         alt = Math.max(0, approxAlt);
       }
@@ -270,7 +295,7 @@ export class CelestialBodies {
         const t = -f.dot(seg) / segLenSq;
         if (t > 0 && t < 1) {
           tClosest = t;
-          const closestPoint = from.clone().addScaledVector(seg, t);
+          const closestPoint = this._scratchClosest.copy(from).addScaledVector(seg, t);
           closestDist = closestPoint.distanceTo(center);
         }
       }
@@ -285,7 +310,7 @@ export class CelestialBodies {
 
       if (terrain) {
         // 1. Below the terrain surface (or a sea of water / lava) at the destination
-        const altQuery = getTerrainAltitude(b, to);
+        const altQuery = getTerrainAltitude(b, to, false, this._altScratch);
         if (altQuery.altitude < shipRadius) {
           collided = true;
           contactPos = to.clone();
@@ -321,7 +346,7 @@ export class CelestialBodies {
 
       if (collided && contactPos) {
         // Outward radial direction from body center
-        const radial = new THREE.Vector3().subVectors(contactPos, center);
+        const radial = this._scratchRadial.subVectors(contactPos, center);
         if (radial.lengthSq() < 1e-6) {
           radial.subVectors(from, center);
         }
@@ -334,7 +359,7 @@ export class CelestialBodies {
         let normal = radial.clone();
 
         if (terrain) {
-          const altQuery = getTerrainAltitude(b, contactPos);
+          const altQuery = getTerrainAltitude(b, contactPos, true, this._altScratch);
           effectiveRadius = altQuery.surfaceRadius;
           // Slope normals only make sense for shallow contacts; deep inside, push straight out
           const shallow = contactPos.distanceTo(center) > altQuery.surfaceRadius - shipRadius * 4;

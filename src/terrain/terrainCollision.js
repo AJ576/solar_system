@@ -5,6 +5,11 @@ const _invMatrix = new THREE.Matrix4();
 const _localShip = new THREE.Vector3();
 const _localDir = new THREE.Vector3();
 const _centerToShip = new THREE.Vector3();
+const _localNormal = new THREE.Vector3();
+const _worldNormal = new THREE.Vector3();
+const _outwardRadial = new THREE.Vector3();
+const _collisionRadial = new THREE.Vector3();
+const _altScratch = { altitude: 0, surfaceRadius: 0, normal: new THREE.Vector3() };
 
 /**
  * Computes exact surface altitude of a world position above a celestial body,
@@ -12,16 +17,25 @@ const _centerToShip = new THREE.Vector3();
  *
  * @param {Object} body Celestial body entry from CelestialBodies
  * @param {THREE.Vector3} worldPos World position (e.g. ship position)
+ * @param {boolean} [computeNormal=true] Whether to compute surface normal (expensive finite difference)
+ * @param {Object} [target=null] Optional target object to mutate to prevent GC allocations
  * @returns {{ altitude: number, surfaceRadius: number, normal: THREE.Vector3 }}
  */
-export function getTerrainAltitude(body, worldPos) {
+export function getTerrainAltitude(body, worldPos, computeNormal = true, target = null) {
+  const result = target || { altitude: 0, surfaceRadius: 0, normal: new THREE.Vector3() };
+
   if (!body.terrainProfile || !body.terrainProfile.hasTerrain) {
     const dist = worldPos.distanceTo(body.position);
-    return {
-      altitude: Math.max(0, dist - body.radius),
-      surfaceRadius: body.radius,
-      normal: dist > 1e-4 ? _centerToShip.subVectors(worldPos, body.position).normalize() : new THREE.Vector3(0, 1, 0)
-    };
+    result.altitude = Math.max(0, dist - body.radius);
+    result.surfaceRadius = body.radius;
+    if (computeNormal) {
+      if (dist > 1e-4) {
+        result.normal.subVectors(worldPos, body.position).normalize();
+      } else {
+        result.normal.set(0, 1, 0);
+      }
+    }
+    return result;
   }
 
   // Transform world position to body's local rotation frame using the spinning mesh
@@ -41,37 +55,39 @@ export function getTerrainAltitude(body, worldPos) {
   const surfaceRadius = body.radius + height;
   const altitude = Math.max(0, localDist - surfaceRadius);
 
-  // Surface normal in local space from terrain generator
-  const localNormal = getSurfaceNormal(
-    _localDir,
-    body.radius,
-    body.terrainProfile.seedNum,
-    body.terrainProfile,
-    new THREE.Vector3()
-  );
-  if (localNormal.dot(_localDir) < 0) {
-    localNormal.negate();
-  }
-  const worldNormal = localNormal.transformDirection(mesh.matrixWorld);
+  result.altitude = altitude;
+  result.surfaceRadius = surfaceRadius;
 
-  // Outward radial direction from body center in world coordinates
-  const outwardRadial = new THREE.Vector3().subVectors(worldPos, body.position);
-  if (outwardRadial.lengthSq() > 1e-6) {
-    outwardRadial.normalize();
-    // Guarantee outward orientation: if slope is extreme or flipped, blend with or fallback to radial
-    if (worldNormal.dot(outwardRadial) < 0.2) {
-      worldNormal.copy(outwardRadial);
+  if (computeNormal) {
+    // Surface normal in local space from terrain generator
+    getSurfaceNormal(
+      _localDir,
+      body.radius,
+      body.terrainProfile.seedNum,
+      body.terrainProfile,
+      _localNormal
+    );
+    if (_localNormal.dot(_localDir) < 0) {
+      _localNormal.negate();
     }
-  } else {
-    outwardRadial.set(0, 1, 0);
-    worldNormal.copy(outwardRadial);
+    _worldNormal.copy(_localNormal).transformDirection(mesh.matrixWorld);
+
+    // Outward radial direction from body center in world coordinates
+    _outwardRadial.subVectors(worldPos, body.position);
+    if (_outwardRadial.lengthSq() > 1e-6) {
+      _outwardRadial.normalize();
+      // Guarantee outward orientation: if slope is extreme or flipped, blend with or fallback to radial
+      if (_worldNormal.dot(_outwardRadial) < 0.2) {
+        _worldNormal.copy(_outwardRadial);
+      }
+    } else {
+      _outwardRadial.set(0, 1, 0);
+      _worldNormal.copy(_outwardRadial);
+    }
+    result.normal.copy(_worldNormal);
   }
 
-  return {
-    altitude,
-    surfaceRadius,
-    normal: worldNormal
-  };
+  return result;
 }
 
 /**
@@ -94,21 +110,23 @@ export function resolveTerrainCollision(body, from, to, shipRadius) {
     return null;
   }
 
-  const { altitude, surfaceRadius, normal } = getTerrainAltitude(body, to);
+  // Check altitude first without surface normal to avoid 3 unneeded noise evaluations
+  getTerrainAltitude(body, to, false, _altScratch);
 
   // Check penetration below terrain surface + shipRadius
-  if (altitude < shipRadius) {
-    const requiredRadius = surfaceRadius + shipRadius * 1.05;
-    const radial = new THREE.Vector3().subVectors(to, body.position);
-    if (radial.lengthSq() < 1e-6) radial.subVectors(from, body.position);
-    if (radial.lengthSq() < 1e-6) radial.set(0, 1, 0);
-    radial.normalize();
+  if (_altScratch.altitude < shipRadius) {
+    getTerrainAltitude(body, to, true, _altScratch);
+    const requiredRadius = _altScratch.surfaceRadius + shipRadius * 1.05;
+    _collisionRadial.subVectors(to, body.position);
+    if (_collisionRadial.lengthSq() < 1e-6) _collisionRadial.subVectors(from, body.position);
+    if (_collisionRadial.lengthSq() < 1e-6) _collisionRadial.set(0, 1, 0);
+    _collisionRadial.normalize();
 
     // Push ship outward along radial direction
-    to.copy(body.position).addScaledVector(radial, requiredRadius);
+    to.copy(body.position).addScaledVector(_collisionRadial, requiredRadius);
     return {
       body,
-      normal
+      normal: _altScratch.normal.clone()
     };
   }
 

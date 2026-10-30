@@ -262,6 +262,17 @@ export function getSurfacePosition(direction, baseRadius, planetSeed, profile, t
   return target.copy(direction).multiplyScalar(baseRadius + height);
 }
 
+const _snUp = new THREE.Vector3();
+const _snTangentU = new THREE.Vector3();
+const _snTangentV = new THREE.Vector3();
+const _snDirU = new THREE.Vector3();
+const _snDirV = new THREE.Vector3();
+const _snP0 = new THREE.Vector3();
+const _snPU = new THREE.Vector3();
+const _snPV = new THREE.Vector3();
+const _snDU = new THREE.Vector3();
+const _snDV = new THREE.Vector3();
+
 /**
  * Computes the perturbed surface normal vector on the terrain using finite differences.
  *
@@ -276,22 +287,26 @@ export function getSurfaceNormal(direction, baseRadius, planetSeed, profile, tar
   const eps = 0.003; // Angular step
 
   // Build two orthogonal tangent vectors to direction
-  const up = Math.abs(direction.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-  const tangentU = new THREE.Vector3().crossVectors(direction, up).normalize();
-  const tangentV = new THREE.Vector3().crossVectors(direction, tangentU).normalize();
+  if (Math.abs(direction.y) < 0.99) {
+    _snUp.set(0, 1, 0);
+  } else {
+    _snUp.set(1, 0, 0);
+  }
+  _snTangentU.crossVectors(direction, _snUp).normalize();
+  _snTangentV.crossVectors(direction, _snTangentU).normalize();
 
   // Perturbed sample directions
-  const dirU = new THREE.Vector3().addScaledVector(direction, 1.0).addScaledVector(tangentU, eps).normalize();
-  const dirV = new THREE.Vector3().addScaledVector(direction, 1.0).addScaledVector(tangentV, eps).normalize();
+  _snDirU.copy(direction).addScaledVector(_snTangentU, eps).normalize();
+  _snDirV.copy(direction).addScaledVector(_snTangentV, eps).normalize();
 
-  const p0 = getSurfacePosition(direction, baseRadius, planetSeed, profile, new THREE.Vector3());
-  const pU = getSurfacePosition(dirU, baseRadius, planetSeed, profile, new THREE.Vector3());
-  const pV = getSurfacePosition(dirV, baseRadius, planetSeed, profile, new THREE.Vector3());
+  getSurfacePosition(direction, baseRadius, planetSeed, profile, _snP0);
+  getSurfacePosition(_snDirU, baseRadius, planetSeed, profile, _snPU);
+  getSurfacePosition(_snDirV, baseRadius, planetSeed, profile, _snPV);
 
-  const dU = pU.sub(p0);
-  const dV = pV.sub(p0);
+  _snDU.subVectors(_snPU, _snP0);
+  _snDV.subVectors(_snPV, _snP0);
 
-  return target.crossVectors(dU, dV).normalize();
+  return target.crossVectors(_snDU, _snDV).normalize();
 }
 
 function smoothstep(e0, e1, x) {
