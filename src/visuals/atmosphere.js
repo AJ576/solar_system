@@ -31,6 +31,7 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
     uSunsetColor: { value: new THREE.Color(config.sunsetColor ?? 0xff7a40) },
     uDensity: { value: config.density ?? 1.0 },
     uFalloff: { value: config.falloff ?? 3.5 },
+    uSteps: { value: 10 },
     ...shadowUniforms
   };
 
@@ -57,6 +58,7 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
       uniform vec3 uSunsetColor;
       uniform float uDensity;
       uniform float uFalloff;
+      uniform int uSteps;
       varying vec3 vWorldPos;
 
       ${CELESTIAL_SHADOW_PARS_FRAGMENT}
@@ -90,13 +92,14 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
         if (t1 <= t0) discard;
 
         float thickness = uAtmoRadius - uPlanetRadius;
-        const int STEPS = 12;
-        float ds = (t1 - t0) / float(STEPS);
+        int steps = clamp(uSteps, 4, 16);
+        float ds = (t1 - t0) / float(steps);
 
         float optical = 0.0;
         float dayAccum = 0.0;
         vec3 light = vec3(0.0);
-        for (int i = 0; i < STEPS; i++) {
+        for (int i = 0; i < 16; i++) {
+          if (i >= steps) break;
           vec3 p = ro + rd * (t0 + (float(i) + 0.5) * ds);
           float r = length(p);
           float h = clamp((r - uPlanetRadius) / thickness, 0.0, 1.0);

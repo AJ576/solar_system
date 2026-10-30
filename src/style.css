@@ -1005,3 +1005,213 @@ canvas.threejs {
   font-size: 12px;
   color: var(--fg-3);
 }
+
+/* ==========================================================================
+   Settings Modal
+   ========================================================================== */
+
+.hud-settings {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 6, 11, 0.85);
+  backdrop-filter: blur(12px);
+  padding: 24px;
+}
+
+.hud-settings__card {
+  width: min(520px, calc(100vw - 48px));
+  background: rgba(13, 17, 24, 0.95);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+}
+
+.hud-settings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.hud-settings__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.hud-settings__body {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.hud-settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hud-settings__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--fg-4);
+}
+
+.hud-settings__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--fg-2);
+}
+
+.hud-settings__quality-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.hud-settings__qbtn {
+  text-align: center;
+  justify-content: center;
+}
+
+.hud-settings__desc {
+  font-size: 12px;
+  color: var(--fg-3);
+  line-height: 1.4;
+  min-height: 32px;
+}
+
+.hud-settings__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 14px 24px;
+  border-top: 1px solid var(--line);
+  background: rgba(10, 13, 19, 0.4);
+}
+
+/* ==========================================================================
+   Photo Mode Overlay
+   ========================================================================== */
+
+.photo-mode-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.photo-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.photo-grid-line {
+  position: absolute;
+  background: rgba(238, 240, 244, 0.15);
+}
+
+.photo-grid-h1 { top: 33.333%; left: 0; right: 0; height: 1px; }
+.photo-grid-h2 { top: 66.666%; left: 0; right: 0; height: 1px; }
+.photo-grid-v1 { left: 33.333%; top: 0; bottom: 0; width: 1px; }
+.photo-grid-v2 { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+
+.photo-flash {
+  position: absolute;
+  inset: 0;
+  background: white;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease-out;
+}
+
+.photo-flash.is-flashing {
+  opacity: 0.85;
+  transition: none;
+}
+
+.photo-hud {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  background: linear-gradient(to top, rgba(4, 6, 11, 0.92) 0%, rgba(4, 6, 11, 0) 100%);
+  pointer-events: auto;
+}
+
+.photo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 24px;
+  background: rgba(14, 18, 26, 0.85);
+  border: 1px solid var(--line-strong);
+  border-radius: 40px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+}
+
+.photo-title {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.photo-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.photo-label {
+  color: var(--fg-2);
+  display: flex;
+  gap: 6px;
+}
+
+.photo-label span {
+  color: var(--fg);
+  font-family: monospace;
+}
+
+.photo-slider {
+  width: 90px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.photo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.photo-hints {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--fg-3);
+  letter-spacing: 0.04em;
+}

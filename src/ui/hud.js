@@ -117,13 +117,14 @@ const HELP_GROUPS = [
     ],
   },
   {
-    title: 'Navigation',
+    title: 'Navigation & Tools',
     rows: [
       [['T', 'Shift+T'], 'Next / previous target'],
       [['R'], 'Target the body nearest the crosshair'],
-      [['L'], 'Target list'],
-      [['H'], 'Hyperspace jump (uses the seed field, or a random seed)'],
-      [['M'], 'Mute / unmute audio & ambient music'],
+      [['P'], 'Toggle Photo Mode (free camera, FOV, screenshots)'],
+      [['O'], 'Toggle Settings (Audio, Graphics, Custom Seed)'],
+      [['L'], 'Target list / All bodies'],
+      [['H'], 'Hyperspace jump to a random system'],
       [['F1', '?'], 'Show / hide this help'],
     ],
   },
@@ -171,10 +172,9 @@ const TEMPLATE = `
   </div>
 
   <div class="hud-nav hud-interactive" data-ref="nav">
-    <input class="hud-input" data-ref="seedInput" type="text" placeholder="Seed" spellcheck="false" autocomplete="off" maxlength="40" aria-label="System seed" />
-    <button class="hud-btn hud-btn--primary" data-ref="btnJump" title="Jump to seed (H)">Jump</button>
-    <button class="hud-btn" data-ref="btnRandom" title="Jump to a random system">Random</button>
-    <button class="hud-btn hud-btn--icon" data-ref="btnAudio" title="Mute / unmute audio (M)" aria-label="Toggle Audio">🔊</button>
+    <button class="hud-btn hud-btn--primary" data-ref="btnJump" title="Jump to a random system (H)">Jump</button>
+    <button class="hud-btn hud-btn--icon" data-ref="btnSettings" title="Settings (O)" aria-label="Settings">⚙</button>
+    <button class="hud-btn hud-btn--icon" data-ref="btnPhoto" title="Photo Mode (P)" aria-label="Photo Mode">📷</button>
     <button class="hud-btn hud-btn--icon" data-ref="btnHelp" title="Controls (F1)" aria-label="Controls">?</button>
   </div>
 
@@ -258,6 +258,51 @@ const TEMPLATE = `
     <div class="hud-list__body" data-ref="listBody"></div>
   </div>
 
+  <div class="hud-settings hud-interactive" data-ref="settingsModal" style="display:none">
+    <div class="hud-settings__card" role="dialog" aria-label="Settings">
+      <div class="hud-settings__head">
+        <span class="hud-settings__title">System Settings</span>
+        <button class="hud-btn" data-ref="btnSettingsClose">Close <kbd>Esc</kbd></button>
+      </div>
+      <div class="hud-settings__body">
+        <div class="hud-settings__section">
+          <div class="hud-settings__label">Sound & Ambience</div>
+          <div class="hud-settings__row">
+            <span>Audio Output</span>
+            <button class="hud-btn" data-ref="btnAudioToggle">
+              <span data-ref="settingsAudioIcon">🔊</span>
+              <span data-ref="settingsAudioLabel" style="margin-left:6px">Mute Audio</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="hud-settings__section">
+          <div class="hud-settings__label">Graphics Quality</div>
+          <div class="hud-settings__quality-row">
+            <button class="hud-btn hud-settings__qbtn" data-ref="btnQualityLow">Low</button>
+            <button class="hud-btn hud-settings__qbtn is-active" data-ref="btnQualityMed">Medium</button>
+            <button class="hud-btn hud-settings__qbtn" data-ref="btnQualityHigh">High</button>
+          </div>
+          <div class="hud-settings__desc" data-ref="qualityDesc">Balanced visual fidelity and frame rate (1.5x resolution, 10 atmo steps, 600 dust particles).</div>
+        </div>
+
+        <div class="hud-settings__section">
+          <div class="hud-settings__label">Hyperspace Navigation</div>
+          <div class="hud-settings__row" style="flex-direction:column;align-items:stretch;gap:8px;">
+            <span style="font-size:12px;color:var(--fg-3)">Jump to specific procedural seed coordinates</span>
+            <div style="display:flex;gap:8px;">
+              <input class="hud-input" data-ref="seedInput" type="text" placeholder="Custom Seed" spellcheck="false" autocomplete="off" maxlength="40" aria-label="System seed" style="flex:1" />
+              <button class="hud-btn hud-btn--primary" data-ref="btnSeededJump" title="Jump to specified seed">Jump to Seed</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="hud-settings__foot">
+        <button class="hud-btn hud-btn--primary" data-ref="btnSettingsDone">Done</button>
+      </div>
+    </div>
+  </div>
+
   <div class="hud-prompt" data-ref="prompt"></div>
 
   <div class="hud-hint" data-ref="hint">Click to steer with mouse</div>
@@ -304,6 +349,7 @@ export class HUD {
     this._cache = new Map();
     this._helpOpen = false;
     this._listOpen = false;
+    this._settingsOpen = false;
     this._targetList = [];
     this._listItems = new Map();
     this._selectedId = undefined;
@@ -329,15 +375,39 @@ export class HUD {
     const e = this.el;
 
     const stop = (ev) => ev.stopPropagation();
-    this._stopTargets = [e.nav, e.targetPanel, e.list, e.help];
+    this._stopTargets = [e.nav, e.targetPanel, e.list, e.help, e.settingsModal];
     for (const n of this._stopTargets) {
-      n.addEventListener('mousedown', stop);
-      n.addEventListener('pointerdown', stop);
-      n.addEventListener('click', stop);
+      if (n) {
+        n.addEventListener('mousedown', stop);
+        n.addEventListener('pointerdown', stop);
+        n.addEventListener('click', stop);
+      }
     }
 
-    e.btnJump.addEventListener('click', () => this._triggerJump(false));
-    e.btnRandom.addEventListener('click', () => this._triggerJump(true));
+    e.btnJump.addEventListener('click', () => this._triggerJump(true));
+    e.btnRandom?.addEventListener('click', () => this._triggerJump(true));
+    e.btnSeededJump?.addEventListener('click', () => {
+      this._triggerJump(false);
+      this._setSettings(false);
+    });
+    e.btnSettings?.addEventListener('click', () => this.toggleSettings());
+    e.btnSettingsClose?.addEventListener('click', () => this._setSettings(false));
+    e.btnSettingsDone?.addEventListener('click', () => this._setSettings(false));
+    e.settingsModal?.addEventListener('click', (ev) => {
+      if (ev.target === e.settingsModal) this._setSettings(false);
+    });
+    e.btnQuality?.addEventListener('click', () => this.callbacks.onCycleQuality?.());
+    e.btnQualityLow?.addEventListener('click', () => this.callbacks.onSetQuality?.('Low'));
+    e.btnQualityMed?.addEventListener('click', () => this.callbacks.onSetQuality?.('Medium'));
+    e.btnQualityHigh?.addEventListener('click', () => this.callbacks.onSetQuality?.('High'));
+    e.btnPhoto?.addEventListener('click', () => this.callbacks.onTogglePhotoMode?.());
+
+    e.btnAudioToggle?.addEventListener('click', () => {
+      if (typeof this.callbacks.onToggleAudio === 'function') {
+        const muted = this.callbacks.onToggleAudio();
+        this.setAudioMuted(muted);
+      }
+    });
     e.btnAudio?.addEventListener('click', () => {
       if (typeof this.callbacks.onToggleAudio === 'function') {
         const muted = this.callbacks.onToggleAudio();
@@ -361,15 +431,16 @@ export class HUD {
     });
 
     // Keys typed into the seed field must not reach flight controls.
-    e.seedInput.addEventListener('keydown', (ev) => {
+    e.seedInput?.addEventListener('keydown', (ev) => {
       ev.stopPropagation();
       if (ev.key === 'Enter') {
         ev.preventDefault();
         this._triggerJump(false);
-        e.seedInput.blur();
+        this._setSettings(false);
       } else if (ev.key === 'Escape') {
         ev.preventDefault();
         e.seedInput.blur();
+        this._setSettings(false);
       }
     });
 
@@ -391,9 +462,10 @@ export class HUD {
         ev.preventDefault();
         return;
       }
-      if (this._helpOpen || this._listOpen) {
+      if (this._helpOpen || this._listOpen || this._settingsOpen) {
         this._setHelp(false);
         this._setList(false);
+        this._setSettings(false);
         ev.preventDefault();
       }
       return;
@@ -414,9 +486,17 @@ export class HUD {
         if (ev.shiftKey) this.callbacks.onTargetPrev?.();
         else this.callbacks.onTargetNext?.();
         break;
+      case 'KeyP':
+        ev.preventDefault();
+        if (!ev.repeat) this.callbacks.onTogglePhotoMode?.();
+        break;
+      case 'KeyO':
+        ev.preventDefault();
+        if (!ev.repeat) this.toggleSettings();
+        break;
       case 'KeyH':
         ev.preventDefault();
-        if (!ev.repeat) this._triggerJump(false);
+        if (!ev.repeat) this._triggerJump(true);
         break;
       case 'KeyL':
         ev.preventDefault();
@@ -428,11 +508,18 @@ export class HUD {
   }
 
   _triggerJump(forceRandom) {
-    const typed = this.el.seedInput.value.trim();
-    const seed = !forceRandom && typed ? typed.toUpperCase() : generateRandomSeed();
-    // Clear so the next H press doesn't re-jump to the same seed.
-    this.el.seedInput.value = '';
-    this.el.seedInput.blur();
+    let seed = null;
+    if (!forceRandom && this.el.seedInput) {
+      const typed = this.el.seedInput.value?.trim();
+      if (typed) seed = typed.toUpperCase();
+    }
+    if (!seed) {
+      seed = generateRandomSeed();
+    }
+    if (this.el.seedInput) {
+      this.el.seedInput.value = '';
+      this.el.seedInput.blur();
+    }
     this.callbacks.onJump?.(seed);
   }
 
@@ -447,6 +534,48 @@ export class HUD {
     this.el.list.classList.toggle('is-open', this._listOpen);
     this.el.btnList.classList.toggle('is-active', this._listOpen);
     if (this._listOpen) this._scrollSelectedIntoView();
+  }
+
+  setQualityLabel(label) {
+    this._currentQuality = label;
+    const descMap = {
+      Low: 'Max performance for laptops and integrated GPUs (1.0x resolution, 6 atmo steps, conservative terrain LOD).',
+      Medium: 'Balanced visual fidelity and smooth frame rate (1.5x resolution, 10 atmo steps, 600 dust particles).',
+      High: 'Full resolution and deepest terrain detail (2.0x resolution, 16 atmo steps, 1000 dust particles).'
+    };
+    if (this.el?.qualityDesc && descMap[label]) {
+      this.el.qualityDesc.textContent = descMap[label];
+    }
+    const qMap = {
+      Low: this.el?.btnQualityLow,
+      Medium: this.el?.btnQualityMed,
+      High: this.el?.btnQualityHigh
+    };
+    for (const [lvl, btn] of Object.entries(qMap)) {
+      if (btn) {
+        btn.classList.toggle('is-active', lvl.toLowerCase() === String(label).toLowerCase());
+      }
+    }
+    if (this.el?.btnQuality) {
+      this.el.btnQuality.textContent = `Quality: ${label}`;
+    }
+  }
+
+  toggleSettings() {
+    this._setSettings(!this._settingsOpen);
+  }
+
+  _setSettings(open) {
+    this._settingsOpen = !!open;
+    if (this.el?.settingsModal) {
+      this.el.settingsModal.style.display = this._settingsOpen ? 'flex' : 'none';
+      if (this.el?.btnSettings) {
+        this.el.btnSettings.classList.toggle('is-active', this._settingsOpen);
+      }
+    }
+    if (this._settingsOpen && document.pointerLockElement) {
+      document.exitPointerLock?.();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -588,9 +717,19 @@ export class HUD {
   }
 
   setAudioMuted(muted) {
+    this._audioMuted = muted;
+    if (this.el?.btnAudioToggle) {
+      this.el.btnAudioToggle.classList.toggle('is-warn', muted);
+    }
+    if (this.el?.settingsAudioIcon) {
+      this.el.settingsAudioIcon.textContent = muted ? '🔇' : '🔊';
+    }
+    if (this.el?.settingsAudioLabel) {
+      this.el.settingsAudioLabel.textContent = muted ? 'Unmute Audio' : 'Mute Audio';
+    }
     if (this.el && this.el.btnAudio) {
       this.el.btnAudio.textContent = muted ? '🔇' : '🔊';
-      this.el.btnAudio.title = muted ? 'Unmute Audio (M)' : 'Mute Audio (M)';
+      this.el.btnAudio.title = muted ? 'Unmute Audio' : 'Mute Audio';
     }
   }
 

@@ -68,6 +68,10 @@ export class TargetingSystem {
     return this.bodies.getById(this.selectedId);
   }
 
+  get selectedBody() {
+    return this.getSelectedTarget();
+  }
+
   /**
    * @param {THREE.Vector3} shipPos Ship world position
    * @param {THREE.Vector3} shipVel Ship velocity relative to its local frame

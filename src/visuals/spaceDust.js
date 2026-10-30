@@ -17,20 +17,21 @@ export class SpaceDust {
     this.referenceSpeed = referenceSpeed;
     // Streak length per unit of speed, scaled with the volume so a smaller ship gets shorter streaks
     this.speedScale = (volumeRadius / 45.0) * (150 / referenceSpeed);
-    this.count = count;
+    this.maxCount = Math.max(1200, count);
+    this.activeCount = count;
     this.volumeRadius = volumeRadius;
 
     // Local coordinates stored in world space around current anchor
-    this.particlePositions = new Float32Array(count * 3);
+    this.particlePositions = new Float32Array(this.maxCount * 3);
     // Line segments: 2 vertices per line (Head and Tail) = count * 2 * 3 floats
-    this.linePositions = new Float32Array(count * 6);
-    this.lineColors = new Float32Array(count * 6);
+    this.linePositions = new Float32Array(this.maxCount * 6);
+    this.lineColors = new Float32Array(this.maxCount * 6);
 
     const baseColor = new THREE.Color(0x70d8ff); // Electric Cyan
     const boostColor = new THREE.Color(0xffffff); // Brilliant White
 
     // Initialize random positions within the bounding volume
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < this.maxCount; i++) {
       const x = (Math.random() - 0.5) * volumeRadius * 2.0;
       const y = (Math.random() - 0.5) * volumeRadius * 2.0;
       const z = (Math.random() - 0.5) * volumeRadius * 2.0;
@@ -63,6 +64,7 @@ export class SpaceDust {
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.linePositions, 3));
     this.geometry.setAttribute('color', new THREE.BufferAttribute(this.lineColors, 3));
+    this.geometry.setDrawRange(0, this.activeCount * 2);
 
     this.material = new THREE.LineBasicMaterial({
       vertexColors: true,
@@ -82,6 +84,17 @@ export class SpaceDust {
 
     this._tempV = new THREE.Vector3();
     this._streakV = new THREE.Vector3();
+  }
+
+  get count() {
+    return this.activeCount;
+  }
+
+  setCount(newCount) {
+    this.activeCount = THREE.MathUtils.clamp(newCount, 50, this.maxCount);
+    if (this.geometry) {
+      this.geometry.setDrawRange(0, this.activeCount * 2);
+    }
   }
 
   /**

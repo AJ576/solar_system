@@ -134,6 +134,7 @@ export class PlanetTerrain {
     // Deepest level: leaf vertex spacing reaches TERRAIN_MIN_SPACING
     const rootEdge = (Math.PI / 2) * this.radius;
     this.maxDepth = Math.max(0, Math.ceil(Math.log2(rootEdge / (CHUNK_RESOLUTION * TERRAIN_MIN_SPACING))));
+    this.splitFactor = SPLIT_FACTOR;
 
     this.material = createTerrainMaterial(profile);
     this.liquidMaterial = createLiquidMaterial(profile);
@@ -254,7 +255,7 @@ export class PlanetTerrain {
 
   _updateNode(node, cam) {
     const d = cam.distanceTo(node.center);
-    const splitDist = node.edge * SPLIT_FACTOR * (node.children ? MERGE_HYSTERESIS : 1);
+    const splitDist = node.edge * (this.splitFactor || SPLIT_FACTOR) * (node.children ? MERGE_HYSTERESIS : 1);
     const wantSplit = node.level < this.maxDepth && d < splitDist && !this._beyondHorizon(node);
 
     if (!wantSplit) {

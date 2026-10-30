@@ -645,6 +645,30 @@ export class AudioManager {
   }
 
   /**
+   * Two-tone scientific telemetry chime on celestial survey completion
+   */
+  playScanComplete() {
+    if (!this.ensureContext()) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, now); // D5
+      osc.frequency.setValueAtTime(880.0, now + 0.08); // A5
+
+      gain.gain.setValueAtTime(0.07, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+
+      osc.connect(gain);
+      gain.connect(this.sfxGain);
+      if (this.convolver) gain.connect(this.convolver);
+      osc.start(now);
+      osc.stop(now + 0.36);
+    } catch {}
+  }
+
+  /**
    * Tactile cockpit switch click (subtle dual-sine mechanical pulse)
    */
   playLightSwitch(on = true) {

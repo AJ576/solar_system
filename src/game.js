@@ -15,6 +15,8 @@ import { OnFootController } from './player/onFoot.js';
 import { AudioManager } from './audio/audioManager.js';
 import { updateCelestialShadows, getCelestialShadowFactor } from './visuals/shadows.js';
 import { ShipContactShadow } from './visuals/shipShadow.js';
+import { QualitySettings } from './systems/qualitySettings.js';
+import { PhotoMode } from './player/photoMode.js';
 
 // G lands the ship below this altitude and speed
 const ASSIST_ALTITUDE = 3;
@@ -34,6 +36,8 @@ export class Game {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.004, 4e6);
 
+    this.quality = new QualitySettings();
+
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
       antialias: true,
@@ -41,7 +45,7 @@ export class Game {
       logarithmicDepthBuffer: true
     });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.quality.getEffectivePixelRatio());
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
 
@@ -87,7 +91,10 @@ export class Game {
     this.bodies = new CelestialBodies(this.systemData, this.systemMeshes);
     this.targeting = new TargetingSystem(this.bodies);
 
-    // 4. HUD
+    // 4. Photo Mode
+    this.photoMode = new PhotoMode(this);
+
+    // 5. HUD
     this.hud = new HUD(this.hudContainer, {
       onJump: (seed) => {
         if (this.mode !== 'flight') {
@@ -103,10 +110,26 @@ export class Game {
         const muted = this.audio.toggleMute();
         this.hud.showNotification(muted ? 'Audio Muted' : 'Audio Unmuted', 1400);
         return muted;
+      },
+      onCycleQuality: () => {
+        const next = this.quality.cycleQuality(this);
+        this.hud.setQualityLabel(next);
+        this.hud.showNotification(`Graphics Quality: ${next}`, 1400);
+      },
+      onSetQuality: (level) => {
+        this.quality.setQuality(level, this);
+        this.hud.setQualityLabel(level);
+        this.hud.showNotification(`Graphics Quality: ${level}`, 1400);
+      },
+      onTogglePhotoMode: () => {
+        this.photoMode.toggle();
       }
     });
 
-    // 5. Hyperspace: swaps the system mid-warp and hands control back to us for placement
+    this.hud.setQualityLabel(this.quality.current);
+    this.quality.applyToGame(this);
+
+    // 6. Hyperspace: swaps the system mid-warp and hands control back to us for placement
     this.hyperspace = new HyperspaceManager(
       this.scene,
       this.camera,
@@ -435,7 +458,7 @@ export class Game {
       this.lightsEnabled = !this.lightsEnabled;
       this.hud.showNotification(this.lightsEnabled ? 'Lights on' : 'Lights off', 1200);
       this.audio.playLightSwitch(this.lightsEnabled);
-    } else if (e.code === 'KeyM') {
+    } else if (e.code === 'KeyU') {
       const muted = this.audio.toggleMute();
       this.hud.showNotification(muted ? 'Audio Muted' : 'Audio Unmuted', 1400);
       this.hud.setAudioMuted?.(muted);
@@ -477,6 +500,7 @@ export class Game {
     updateOrbits(this.systemMeshes, this.systemData, 0, 0);
     this.bodies.setSystem(newSystemData, newSystemMeshes);
     this.hyperspace.setCurrentSystem(newSystemData, newSystemMeshes);
+    this.quality.applyToGame(this);
     if (this.shipShadow?.mesh) this.shipShadow.mesh.visible = false;
     this.enterSystem();
     this.hud.showNotification(`Arrived at ${newSystemData.name}`, 3500);
@@ -512,7 +536,7 @@ export class Game {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.renderer.setPixelRatio(this.quality.getEffectivePixelRatio());
     });
 
     window.addEventListener('keydown', (e) => this._onModeKey(e));
@@ -531,6 +555,14 @@ export class Game {
     requestAnimationFrame(this.animate);
 
     const delta = Math.min(this.clock.getDelta(), 0.05);
+
+    // Free camera photo mode freezes orbital simulation & ship physics
+    if (this.photoMode?.isActive) {
+      this.photoMode.update(delta);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
     this.totalSimTime += delta;
     const ship = this.controls.ship;
 
