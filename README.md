@@ -28,7 +28,8 @@ An interactive, playable 3D space exploration prototype built with Three.js and 
 - **Landing and Exploring on Foot**:
   - Near a surface the flight frame co-rotates with the planet, so the ground below holds still while the planet spins and orbits.
   - Press `G` close to the ground to land (landing is never automatic, so you can skim the surface). The ship settles level, shuts its engines down and stays parked in the planet's frame.
-  - Night sides are no longer pitch black: a dim sky-glow lights the ground near the surface, and the ship's headlight and your lantern switch on automatically in the dark (`N` toggles them).
+  - Near the surface, planets with an atmosphere add a sky light tinted by their air (warmer at twilight). It is there by day and brighter at night, scaled by how thick the atmosphere is and a per-planet factor, so some nights are bright and others stay moody. Airless worlds only get faint starlight.
+  - `N` switches lights on or off at any time: the ship's headlight in flight, or a lantern that lights about 100 m around you on foot.
   - The parked ship is solid when you walk around it; you can climb onto its wings.
   - Press `F` to step out and walk in first person (WASD, Shift to run, Space to jump) with gravity scaled to the body's size. Swim on water worlds; press `F` next to the ship to board again, `W` to take off.
 
@@ -85,7 +86,7 @@ An interactive, playable 3D space exploration prototype built with Three.js and 
 | **H** | Hyperspace jump (to the seed in the input, or a random one) |
 | **G** | Land (close to the ground and slow) |
 | **F** | Step out of the ship / board it again |
-| **N** | Lights: auto at night / off |
+| **N** | Lights on / off (headlight, or lantern on foot) |
 | **W A S D**, **Shift**, **Space** | On foot: walk, run, jump |
 | **F1 / ?** | Help |
 

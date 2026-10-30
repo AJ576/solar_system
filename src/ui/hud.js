@@ -113,7 +113,7 @@ const HELP_GROUPS = [
       [['W', 'A', 'S', 'D'], 'Walk'],
       [['Shift'], 'Run'],
       [['Space'], 'Jump / swim up'],
-      [['N'], 'Lights: auto (headlight and lantern come on at night) / off'],
+      [['N'], 'Lights on / off (ship headlight, or your lantern on foot)'],
     ],
   },
   {

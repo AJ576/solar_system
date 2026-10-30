@@ -57,14 +57,18 @@ export class Game {
     this.shipBoxes = this._measureShipBoxes();
     this._inBelt = false;
 
-    // Night lighting: ship headlight, on-foot lantern and a dim sky-glow near surfaces
-    this.lightsEnabled = true;
-    this.lantern = new THREE.PointLight(0xffe2bc, 0, 0.6, 1);
+    // Lights (N): ship headlight in flight, a lantern that lights ~100 m around you on foot
+    this.lightsEnabled = false;
+    this._darkHintShown = false;
+    this.lantern = new THREE.PointLight(0xffe2bc, 0, 2.0, 0.6);
     this.lantern.name = 'PlayerLantern';
     this.scene.add(this.lantern);
-    this.nightGlow = new THREE.AmbientLight(0x7083ad, 0);
-    this.nightGlow.name = 'NightSkyGlow';
-    this.scene.add(this.nightGlow);
+    // Sky light near a surface: tinted by the atmosphere, brighter on denser ones
+    this.skyLight = new THREE.AmbientLight(0x8a96b8, 0);
+    this.skyLight.name = 'SkyLight';
+    this.scene.add(this.skyLight);
+    this._skyColor = new THREE.Color();
+    this._sunsetColor = new THREE.Color();
 
     // 3. Solar system + body registry + targeting
     this.totalSimTime = 0;
@@ -203,30 +207,62 @@ export class Game {
   }
 
   /**
-   * 0 in daylight / far from any surface, 1 on the night side close to the ground.
-   * Drives the headlight, lantern and night sky-glow.
+   * How close to a body's surface `pos` is (1 near the ground, 0 from 0.6 R up), and how
+   * high its sun is there (-1 midnight .. 1 noon).
    */
-  _nightLevel(pos, body) {
-    if (!body || body.kind === 'star') return 0;
+  _surfaceLightState(pos, body) {
+    if (!body || body.kind === 'star') return { near: 0, sun: 1 };
     const alt = pos.distanceTo(body.position) - body.radius;
     const near = 1 - THREE.MathUtils.smoothstep(alt, body.radius * 0.15, body.radius * 0.6);
-    if (near <= 0) return 0;
     const up = this._v3.subVectors(pos, body.position).normalize();
     const toSun = this._toBody.copy(this.systemMeshes.starMesh.getWorldPosition(this._camForward)).sub(pos).normalize();
-    const night = 1 - THREE.MathUtils.smoothstep(up.dot(toSun), -0.15, 0.2);
+    return { near, sun: up.dot(toSun) };
+  }
+
+  /**
+   * Ambient sky light near a surface. Bodies with an atmosphere get a tinted glow at all
+   * times (scattered light by day, airglow and twilight by night), scaled by how thick the
+   * air is and a per-planet factor, so some worlds have bright nights and others stay
+   * moody. Airless bodies only get faint starlight at night.
+   */
+  _updateSkyLight(nearest) {
+    const body = nearest?.body;
+    const { near, sun } = this._surfaceLightState(this.camera.position, body);
+    if (near <= 0) {
+      this.skyLight.intensity = 0;
+      return 0;
+    }
+    const night = 1 - THREE.MathUtils.smoothstep(sun, -0.15, 0.2);
+    const atmo = body.terrainProfile?.atmosphere;
+    if (atmo) {
+      const density = THREE.MathUtils.clamp(atmo.density, 0.3, 1.6);
+      // Deterministic per-planet variation in how bright the sky glow is
+      const variation = 0.7 + 0.6 * ((((body.terrainProfile.seedNum >>> 0) * 2654435761) >>> 0) / 4294967296);
+      const twilight = 1 - THREE.MathUtils.smoothstep(Math.abs(sun), 0.0, 0.35);
+      this._skyColor.setHex(atmo.color).lerp(this._sunsetColor.setHex(atmo.sunsetColor ?? atmo.color), twilight * 0.7);
+      const strength = Math.min(1.1, density * variation);
+      this.skyLight.color.copy(this._skyColor);
+      this.skyLight.intensity = near * strength * (0.3 + 0.45 * night);
+    } else {
+      this.skyLight.color.setHex(0x8a96b8);
+      this.skyLight.intensity = near * night * 0.8;
+    }
     return near * night;
   }
 
-  _updateNightLighting(nearest) {
-    const pos = this.camera.position;
-    const level = nearest ? this._nightLevel(pos, nearest.body) : 0;
-    this.nightGlow.intensity = level * 0.9;
-    const lights = this.lightsEnabled ? level : 0;
-    this.spaceship.setHeadlights(lights);
-    if (this.mode === 'foot') {
-      const up = this._v3.copy(pos).sub(nearest ? nearest.body.position : pos).normalize();
-      this.lantern.position.copy(pos).addScaledVector(up, 0.004);
-      this.lantern.intensity = lights * 0.03;
+  _updateLights(nearest) {
+    const darkness = this._updateSkyLight(nearest);
+    if (darkness > 0.8 && !this.lightsEnabled && !this._darkHintShown) {
+      this._darkHintShown = true;
+      this.hud.showNotification('Getting dark: press N for lights', 2600);
+    }
+    const on = this.lightsEnabled ? 1 : 0;
+    this.spaceship.setHeadlights(this.mode === 'foot' ? 0 : on);
+    if (this.mode === 'foot' && on) {
+      // Held a little above head height so it lights the ground evenly all around
+      const up = this._v3.copy(this.camera.position).sub(nearest ? nearest.body.position : this.camera.position).normalize();
+      this.lantern.position.copy(this.camera.position).addScaledVector(up, 0.006);
+      this.lantern.intensity = 0.35;
     } else {
       this.lantern.intensity = 0;
     }
@@ -361,7 +397,7 @@ export class Game {
     if (e.repeat) return;
     if (e.code === 'KeyN') {
       this.lightsEnabled = !this.lightsEnabled;
-      this.hud.showNotification(this.lightsEnabled ? 'Lights: auto (on at night)' : 'Lights off', 1400);
+      this.hud.showNotification(this.lightsEnabled ? 'Lights on' : 'Lights off', 1200);
     } else if (e.code === 'KeyG' && this.mode === 'flight') {
       const body = this._landingCandidate(this.bodies.findNearest(this.controls.ship.position));
       if (body) this.startLanding(body);
@@ -519,7 +555,7 @@ export class Game {
       if (nearest && nearest.body) this._clampCameraAboveSurface(nearest.body);
     }
     this.updateTerrainLODs();
-    this._updateNightLighting(nearest);
+    this._updateLights(nearest);
     this.hyperspace.update(delta);
     this.spaceDust.lines.visible = this.mode === 'flight';
     this.spaceDust.update(ship.position, this.controls.velocity, this.controls.isBoosting, delta);
