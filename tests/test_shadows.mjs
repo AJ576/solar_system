@@ -5,7 +5,9 @@ import {
   applyCelestialShadows,
   updateCelestialShadows,
   canOccluderShadowReceiver,
-  getCelestialShadowFactor
+  getCelestialShadowFactor,
+  getCelestialPlanetshine,
+  getBodyPrimaryColor
 } from '../src/visuals/shadows.js';
 import { ShipContactShadow } from '../src/visuals/shipShadow.js';
 import { generateSolarSystemData, buildSolarSystemMeshes } from '../src/systems/solarSystemGenerator.js';
@@ -30,6 +32,7 @@ console.log('\n[Celestial Shadows & Uniforms]');
   const u = createShadowUniforms();
   assert(u.uSunPosition && u.uOccluders && u.uOccluderCount, 'createShadowUniforms initializes required uniforms');
   assert(u.uOccluders.value.length === 4, 'createShadowUniforms provides 4 occluder slots');
+  assert(u.uPlanetshineDir && u.uPlanetshineColor, 'createShadowUniforms initializes planetshine uniforms');
 
   const ru = createRingShadowUniforms();
   assert(ru.uSunPosition && ru.uPlanetCenter && ru.uPlanetRadius, 'createRingShadowUniforms initializes required uniforms');
@@ -149,6 +152,76 @@ console.log('\n[System Shadow Update Integration]');
     m1Mesh.getWorldPosition(m1World);
     const distToSibling = m1World.distanceTo(new THREE.Vector3(occPos.x, occPos.y, occPos.z));
     assert(distToSibling < 1.0, 'Sibling moon accurately registered as occluder on recipient moon');
+  }
+}
+
+console.log('\n[Planetshine & Secondary Reflection]');
+
+{
+  // 1. getCelestialPlanetshine directional math & getBodyPrimaryColor
+  assert(getBodyPrimaryColor({ color: 0x123456 }) === 0x123456, 'getBodyPrimaryColor returns color when no palette present');
+  assert(getBodyPrimaryColor({ terrainProfile: { palette: { mid: 0xffaa00 } } }) === 0xffaa00, 'getBodyPrimaryColor extracts mid palette color');
+
+  const pUniforms = createShadowUniforms();
+  pUniforms.uPlanetshineDir.value.set(0, 1, 0);
+  pUniforms.uPlanetshineColor.value.setRGB(0.8, 0.6, 0.4);
+
+  // Facing directly toward planet (up = (0, 1, 0))
+  const directLight = getCelestialPlanetshine(new THREE.Vector3(0, 1, 0), pUniforms);
+  assert(directLight.r > 0.7 && directLight.g > 0.5, 'getCelestialPlanetshine delivers strong color when facing planet');
+
+  // Facing away from planet (down = (0, -1, 0))
+  const backLight = getCelestialPlanetshine(new THREE.Vector3(0, -1, 0), pUniforms);
+  assert(backLight.r === 0 && backLight.g === 0 && backLight.b === 0, 'getCelestialPlanetshine is zero on surfaces facing away from planet');
+
+  // 2. Integration: Moon orbiting parent planet
+  const scene = new THREE.Scene();
+  const systemData = generateSolarSystemData('Sol-Prime-42');
+  const systemMeshes = buildSolarSystemMeshes(systemData, scene);
+  updateOrbits(systemMeshes, systemData, 0, 0);
+
+  const planetWithMoons = systemMeshes.planetEntries.find(p => p.moons && p.moons.length > 0);
+  assert(planetWithMoons !== undefined, 'Found planet with at least one moon for planetshine test');
+
+  if (planetWithMoons) {
+    const pMesh = planetWithMoons.mesh;
+    const m0 = planetWithMoons.moons[0];
+    const pWorld = new THREE.Vector3();
+    pMesh.getWorldPosition(pWorld);
+    const starWorld = new THREE.Vector3();
+    systemMeshes.starMesh.getWorldPosition(starWorld);
+
+    // A. "Full Planet" configuration: Place moon between planet and star
+    const dirPlanetToStar = new THREE.Vector3().subVectors(starWorld, pWorld).normalize();
+    const mFullPos = new THREE.Vector3().copy(pWorld).addScaledVector(dirPlanetToStar, planetWithMoons.data.radius * 2.5);
+    planetWithMoons.group.worldToLocal(mFullPos);
+    m0.mesh.position.copy(mFullPos);
+    m0.mesh.updateMatrixWorld(true);
+    updateCelestialShadows(systemMeshes, systemData);
+
+    const m0Mat = m0.terrainLOD?.material || m0.mesh?.material;
+    const fullPlanetshine = m0Mat?.userData?.shadowUniforms?.uPlanetshineColor?.value;
+    assert(fullPlanetshine !== undefined, 'Moon shadowUniforms contains uPlanetshineColor');
+    const fullIntensity = Math.max(fullPlanetshine.r, fullPlanetshine.g, fullPlanetshine.b);
+    assert(fullIntensity > 0.01, `Full planet configuration produces strong planetshine (${fullIntensity.toFixed(3)}) on moon`);
+
+    // B. "New Planet" configuration: Place moon on the night side of the planet (opposite the star)
+    const mNewPos = new THREE.Vector3().copy(pWorld).addScaledVector(dirPlanetToStar, -planetWithMoons.data.radius * 2.5);
+    planetWithMoons.group.worldToLocal(mNewPos);
+    m0.mesh.position.copy(mNewPos);
+    m0.mesh.updateMatrixWorld(true);
+    updateCelestialShadows(systemMeshes, systemData);
+
+    const newPlanetshine = m0Mat?.userData?.shadowUniforms?.uPlanetshineColor?.value;
+    const newIntensity = Math.max(newPlanetshine.r, newPlanetshine.g, newPlanetshine.b);
+    assert(newIntensity < 0.001, `New planet configuration drops planetshine to zero (${newIntensity.toFixed(4)}) on moon`);
+
+    // C. Parent planet receives faint moonshine from the moon
+    const pMat = planetWithMoons.terrainLOD?.material || planetWithMoons.mesh?.material;
+    const pMoonshine = pMat?.userData?.shadowUniforms?.uPlanetshineColor?.value;
+    assert(pMoonshine !== undefined, 'Parent planet shadowUniforms contains uPlanetshineColor');
+    const pIntensity = Math.max(pMoonshine.r, pMoonshine.g, pMoonshine.b);
+    assert(pIntensity > 0 && pIntensity < fullIntensity, 'Moonshine on parent planet is active and dimmer than planetshine on moon');
   }
 }
 

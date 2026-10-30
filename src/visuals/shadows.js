@@ -27,7 +27,9 @@ export function createShadowUniforms() {
     uPlanetCenter: { value: new THREE.Vector3() },
     uRingNormal: { value: new THREE.Vector3(0, 1, 0) },
     uRingInner: { value: 0.0 },
-    uRingOuter: { value: 0.0 }
+    uRingOuter: { value: 0.0 },
+    uPlanetshineDir: { value: new THREE.Vector3(0, 1, 0) },
+    uPlanetshineColor: { value: new THREE.Color(0x000000) }
   };
 }
 
@@ -50,6 +52,8 @@ export const CELESTIAL_SHADOW_PARS_FRAGMENT = /* glsl */`
   uniform vec3 uRingNormal;
   uniform float uRingInner;
   uniform float uRingOuter;
+  uniform vec3 uPlanetshineDir;
+  uniform vec3 uPlanetshineColor;
 
   float calculateEclipseShadow(vec3 worldPos) {
     if (uOccluderCount == 0 && uHasRings == 0) return 1.0;
@@ -164,16 +168,18 @@ export function applyCelestialShadows(material, isRing = false) {
 
     Object.assign(shader.uniforms, uniforms);
 
-    // 1. Vertex shader world position
+    // 1. Vertex shader world position & normal
     if (!shader.vertexShader.includes('vShadowWorldPos')) {
       shader.vertexShader = `
         varying vec3 vShadowWorldPos;
+        varying vec3 vShadowWorldNormal;
         ${shader.vertexShader}
       `.replace(
         '#include <worldpos_vertex>',
         `
         #include <worldpos_vertex>
         vShadowWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vShadowWorldNormal = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);
         `
       );
     }
@@ -195,6 +201,7 @@ export function applyCelestialShadows(material, isRing = false) {
     } else {
       shader.fragmentShader = `
         varying vec3 vShadowWorldPos;
+        varying vec3 vShadowWorldNormal;
         ${CELESTIAL_SHADOW_PARS_FRAGMENT}
         ${shader.fragmentShader}
       `.replace(
@@ -204,6 +211,11 @@ export function applyCelestialShadows(material, isRing = false) {
         float celestialShadow = calculateEclipseShadow(vShadowWorldPos);
         reflectedLight.directDiffuse *= celestialShadow;
         reflectedLight.directSpecular *= celestialShadow;
+
+        // Analytical Planetshine (secondary reflected light from parent planet / moons)
+        vec3 shadowNormal = normalize(vShadowWorldNormal);
+        float NdotP = clamp((dot(shadowNormal, uPlanetshineDir) + 0.1) / 1.1, 0.0, 1.0);
+        reflectedLight.indirectDiffuse += uPlanetshineColor * (NdotP * diffuseColor.rgb);
         `
       );
     }
@@ -236,6 +248,46 @@ const _scratchSunDir = new THREE.Vector3();
 const _scratchToOcc = new THREE.Vector3();
 const _scratchWorldToCenter = new THREE.Vector3();
 const _scratchHitPos = new THREE.Vector3();
+
+// Scratch variables for planetshine calculations
+const _vPlanetToSun = new THREE.Vector3();
+const _vMoonToPlanet = new THREE.Vector3();
+const _vMoonToSun = new THREE.Vector3();
+const _vPlanetToMoon = new THREE.Vector3();
+const _moonPlanetshineColor = new THREE.Color();
+const _scratchPlanetColor = new THREE.Color();
+const _planetMoonshineColor = new THREE.Color();
+const _planetMoonshineDir = new THREE.Vector3();
+const _vMoonPlanetshineDir = new THREE.Vector3();
+
+const PLANET_ALBEDO_MAP = {
+  'Gas Giant': 0.60,
+  'Ice': 0.70,
+  'Ocean': 0.45,
+  'Desert': 0.35,
+  'Rocky': 0.25
+};
+
+/**
+ * Extracts the primary surface / biome color for a planet or moon.
+ * Checks terrain profile palette (mid/low elevation), falling back to data.color.
+ *
+ * @param {Object} data Celestial body data (planet or moon data object)
+ * @returns {number} Hex color value
+ */
+export function getBodyPrimaryColor(data) {
+  if (!data) return 0xaaaaaa;
+  if (data.terrainProfile?.palette?.mid) {
+    return data.terrainProfile.palette.mid;
+  }
+  if (data.terrainProfile?.palette?.low) {
+    return data.terrainProfile.palette.low;
+  }
+  if (data.color !== undefined && data.color !== null) {
+    return data.color;
+  }
+  return 0xaaaaaa;
+}
 
 /**
  * Tests whether an occluder sphere can cast a shadow on any part of a receiver sphere.
@@ -347,6 +399,30 @@ export function getCelestialShadowFactor(worldPos, shadowUniforms) {
 }
 
 /**
+ * Evaluates the analytical planetshine irradiance (color and intensity) at a specific surface normal.
+ * Used for surface skylight fill on ship and player avatar.
+ *
+ * @param {THREE.Vector3} surfaceNormal Surface outward normal
+ * @param {Object} shadowUniforms Material userData.shadowUniforms object
+ * @param {THREE.Color} [outColor] Optional target color to write into
+ * @returns {THREE.Color} The reflected planetshine color reaching this surface point
+ */
+export function getCelestialPlanetshine(surfaceNormal, shadowUniforms, outColor = new THREE.Color()) {
+  outColor.setRGB(0, 0, 0);
+  if (!shadowUniforms || !shadowUniforms.uPlanetshineColor || !shadowUniforms.uPlanetshineDir) {
+    return outColor;
+  }
+  const pColor = shadowUniforms.uPlanetshineColor.value;
+  if (!pColor || (pColor.r === 0 && pColor.g === 0 && pColor.b === 0)) {
+    return outColor;
+  }
+  const pDir = shadowUniforms.uPlanetshineDir.value;
+  const NdotP = Math.max(0.0, (surfaceNormal.dot(pDir) + 0.1) / 1.1);
+  outColor.copy(pColor).multiplyScalar(NdotP);
+  return outColor;
+}
+
+/**
  * Updates all celestial shadow uniforms per frame. Call after updating orbits.
  * Automatically performs CPU culling so unaligned moons incur zero GPU fragment cost.
  *
@@ -407,24 +483,17 @@ export function updateCelestialShadows(systemMeshes, systemData) {
       }
     }
 
-    for (let mIdx = 0; mIdx < pMaterials.length; mIdx++) {
-      const mat = pMaterials[mIdx];
-      const u = mat.userData?.shadowUniforms;
-      if (!u) continue;
-      u.uSunPosition.value.copy(_starPos);
-      u.uSunRadius.value = starRadius;
-      u.uOccluderCount.value = pOccCount;
-      for (let o = 0; o < pOccCount; o++) {
-        u.uOccluders.value[o].copy(_occScratch[o]);
-      }
-      u.uHasRings.value = hasRings ? 1 : 0;
-      if (hasRings) {
-        u.uPlanetCenter.value.copy(_planetPos);
-        u.uRingNormal.value.copy(_ringNormal);
-        u.uRingInner.value = innerR;
-        u.uRingOuter.value = outerR;
-      }
-    }
+    // Planetshine setup for parent planet
+    _vPlanetToSun.subVectors(_starPos, _planetPos).normalize();
+    const pType = entry.data.type || 'Terrestrial';
+    const pAlbedo = PLANET_ALBEDO_MAP[pType] || 0.35;
+    _scratchPlanetColor.set(getBodyPrimaryColor(entry.data));
+    const maxPC = Math.max(_scratchPlanetColor.r, _scratchPlanetColor.g, _scratchPlanetColor.b, 1e-3);
+    _scratchPlanetColor.multiplyScalar(1.0 / maxPC);
+
+    let maxMoonshineIntensity = 0;
+    _planetMoonshineColor.setRGB(0, 0, 0);
+    _planetMoonshineDir.set(0, 1, 0);
 
     // Planet shadow on ring
     if (hasRings && entry.ringMesh.material) {
@@ -437,12 +506,44 @@ export function updateCelestialShadows(systemMeshes, systemData) {
       }
     }
 
-    // Shadows on each moon: test parent planet AND sibling moons
+    // Shadows & planetshine on each moon: test parent planet AND sibling moons
     for (let m = 0; m < moons.length; m++) {
       const moon = moons[m];
       if (!moon.mesh) continue;
       moon.mesh.getWorldPosition(_moonPos);
       const moonRadius = moon.data.radius;
+
+      // Moon planetshine from parent planet
+      const dMoonToPlanet = Math.max(1.0, _moonPos.distanceTo(_planetPos));
+      _vMoonToPlanet.subVectors(_planetPos, _moonPos).divideScalar(dMoonToPlanet);
+      const cosPlanetPhase = -_vPlanetToSun.dot(_vMoonToPlanet);
+      const planetPhase = Math.max(0.0, (1.0 + cosPlanetPhase) * 0.5);
+
+      // Apparent angular size factor: prominent when close, falls off smoothly with distance
+      const angularSize = Math.min(1.0, Math.sqrt(pRadius / dMoonToPlanet) * 1.8);
+      // Planetshine on moon: prominent for gas giants, soft for rocky worlds, capped at 0.32
+      const moonPlanetshineIntensity = Math.min(0.32, 1.2 * pAlbedo * planetPhase * angularSize);
+
+      _moonPlanetshineColor.copy(_scratchPlanetColor).multiplyScalar(moonPlanetshineIntensity);
+      _vMoonPlanetshineDir.copy(_vMoonToPlanet);
+
+      // Moonshine contribution from this moon to the parent planet
+      _vPlanetToMoon.copy(_vMoonToPlanet).negate();
+      _vMoonToSun.subVectors(_starPos, _moonPos).normalize();
+      const cosMoonPhase = -_vMoonToSun.dot(_vPlanetToMoon);
+      const moonPhase = Math.max(0.0, (1.0 + cosMoonPhase) * 0.5);
+      const moonAngularSize = Math.min(1.0, Math.sqrt(moonRadius / dMoonToPlanet) * 2.5);
+      // Moonshine on parent planet: subtle, realistic moonlight (capped at 0.08, ~1/15th of sunlight)
+      const thisMoonshineIntensity = Math.min(0.08, 0.18 * moonPhase * moonAngularSize);
+      if (thisMoonshineIntensity > maxMoonshineIntensity) {
+        maxMoonshineIntensity = thisMoonshineIntensity;
+        // Moon primary biome / surface color
+        _planetMoonshineColor.set(getBodyPrimaryColor(moon.data));
+        const maxMC = Math.max(_planetMoonshineColor.r, _planetMoonshineColor.g, _planetMoonshineColor.b, 1e-3);
+        _planetMoonshineColor.multiplyScalar(1.0 / maxMC);
+        _planetMoonshineColor.multiplyScalar(thisMoonshineIntensity);
+        _planetMoonshineDir.copy(_vPlanetToMoon);
+      }
 
       let mOccCount = 0;
 
@@ -485,6 +586,34 @@ export function updateCelestialShadows(systemMeshes, systemData) {
           mu.uOccluders.value[o].copy(_occScratch[o]);
         }
         mu.uHasRings.value = 0;
+        if (mu.uPlanetshineDir && mu.uPlanetshineColor) {
+          mu.uPlanetshineDir.value.copy(_vMoonPlanetshineDir);
+          mu.uPlanetshineColor.value.copy(_moonPlanetshineColor);
+        }
+      }
+    }
+
+    // Apply shadow and moonshine uniforms to planet materials
+    for (let mIdx = 0; mIdx < pMaterials.length; mIdx++) {
+      const mat = pMaterials[mIdx];
+      const u = mat.userData?.shadowUniforms;
+      if (!u) continue;
+      u.uSunPosition.value.copy(_starPos);
+      u.uSunRadius.value = starRadius;
+      u.uOccluderCount.value = pOccCount;
+      for (let o = 0; o < pOccCount; o++) {
+        u.uOccluders.value[o].copy(_occScratch[o]);
+      }
+      u.uHasRings.value = hasRings ? 1 : 0;
+      if (hasRings) {
+        u.uPlanetCenter.value.copy(_planetPos);
+        u.uRingNormal.value.copy(_ringNormal);
+        u.uRingInner.value = innerR;
+        u.uRingOuter.value = outerR;
+      }
+      if (u.uPlanetshineDir && u.uPlanetshineColor) {
+        u.uPlanetshineDir.value.copy(_planetMoonshineDir);
+        u.uPlanetshineColor.value.copy(_planetMoonshineColor);
       }
     }
   }

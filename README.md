@@ -30,6 +30,8 @@ An interactive, playable 3D space exploration game built with Three.js and Vite.
   - **Moon-to-Moon Eclipses**: Sibling moons occlude sunlight and shadow neighboring moons.
   - **Ring Shadows**: Rings cast dynamic striped shadow bands onto planetary surfaces and cloud decks; planets cast soft shadows onto their ring systems.
   - **Contact Shadow**: Soft, height-scaled proximity shadow underneath the ship hull for gauging landing clearance.
+  - **Reflected Planetshine & Moonshine (Secondary Illumination)**: Real-time analytical planetshine and moonshine evaluated per-pixel from celestial positions, surface palette colors, phase, and solid angles. Gas giants dramatically illuminate the night sides of their orbiting moons in their primary hues, while orbiting moons cast vibrant moonlight across the night sides of their parent worlds.
+  - **Surface Ambient & Night Calibration**: Surface skylight dynamically incorporates reflected planetshine and moonshine when celestial bodies hang overhead, while unlit rocky nights maintain a minimal starlight floor for crisp, dark nights.
 
 - **Landing and Exploring on Foot**:
   - Near the surface, the flight reference frame co-rotates with the planet so the ground remains stationary while the world spins and orbits.

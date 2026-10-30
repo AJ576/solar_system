@@ -314,8 +314,8 @@ export function createEnvironment(scene) {
   // -------------------------------------------------------------
   // 5. Cinematic Space Ambient Light (Calibrated High Contrast)
   // -------------------------------------------------------------
-  // Ambient is kept very subtle (0.10) so star shadow terminators remain crisp & dramatic
-  const ambientLight = new THREE.AmbientLight(0x2a3346, 0.35);
+  // Ambient provides minimal baseline illumination (0.10) keeping max scene ambient capped at 0.30
+  const ambientLight = new THREE.AmbientLight(0x2a3346, 0.10);
   ambientLight.name = 'SpaceAmbientLight';
   if (scene) scene.add(ambientLight);
 

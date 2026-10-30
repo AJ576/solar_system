@@ -13,7 +13,7 @@ import { getTerrainAltitude } from './terrain/terrainCollision.js';
 import { getSolidSurfaceHeight, getSurfaceNormal } from './terrain/terrainGenerator.js';
 import { OnFootController } from './player/onFoot.js';
 import { AudioManager } from './audio/audioManager.js';
-import { updateCelestialShadows, getCelestialShadowFactor } from './visuals/shadows.js';
+import { updateCelestialShadows, getCelestialShadowFactor, getCelestialPlanetshine } from './visuals/shadows.js';
 import { ShipContactShadow } from './visuals/shipShadow.js';
 import { QualitySettings } from './systems/qualitySettings.js';
 import { PhotoMode } from './player/photoMode.js';
@@ -152,6 +152,7 @@ export class Game {
     this._q1 = new THREE.Quaternion();
     this._m1 = new THREE.Matrix4();
     this._altScratch = { altitude: 0, surfaceRadius: 0, normal: new THREE.Vector3() };
+    this._planetshineScratchColor = new THREE.Color();
 
     setTimeout(() => this.hud.showNotification(`Welcome to ${this.systemData.name}`, 3500), 400);
 
@@ -259,13 +260,18 @@ export class Game {
     return { near, sun: up.dot(toSun) };
   }
 
-  _getBodyShadowFactor(body, pos) {
-    if (!body) return 1.0;
+  _getBodyShadowUniforms(body) {
+    if (!body) return null;
     const mesh = body.mesh || body.object;
-    const uniforms = mesh?.userData?.terrainLOD?.material?.userData?.shadowUniforms
+    return mesh?.userData?.terrainLOD?.material?.userData?.shadowUniforms
       || mesh?.material?.userData?.shadowUniforms
       || mesh?.userData?.atmoMesh?.material?.userData?.shadowUniforms
-      || body.terrainLOD?.material?.userData?.shadowUniforms;
+      || body.terrainLOD?.material?.userData?.shadowUniforms
+      || null;
+  }
+
+  _getBodyShadowFactor(body, pos) {
+    const uniforms = this._getBodyShadowUniforms(body);
     if (uniforms) {
       return getCelestialShadowFactor(pos, uniforms);
     }
@@ -275,8 +281,9 @@ export class Game {
   /**
    * Ambient sky light near a surface. Bodies with an atmosphere get a tinted glow at all
    * times (scattered light by day, airglow and twilight by night), scaled by how thick the
-   * air is and a per-planet factor, so some worlds have bright nights and others stay
-   * moody. Airless bodies only get faint starlight at night.
+   * air is and a per-planet factor. Night sides receive real-time secondary planetshine
+   * reflected from the parent planet or moons in the sky, with the flat night ambient
+   * kept subtle so illuminated nights stay moody and dramatic.
    */
   _updateSkyLight(nearest) {
     const body = nearest?.body;
@@ -286,7 +293,16 @@ export class Game {
       return 0;
     }
     const night = 1 - THREE.MathUtils.smoothstep(sun, -0.15, 0.2);
-    const shadowFactor = this._getBodyShadowFactor(body, this.camera.position);
+    const uniforms = this._getBodyShadowUniforms(body);
+    const shadowFactor = uniforms ? getCelestialShadowFactor(this.camera.position, uniforms) : 1.0;
+
+    // Upward surface normal at player position
+    const upNormal = this._v3.subVectors(this.camera.position, body.position).normalize();
+    const planetshineColor = uniforms
+      ? getCelestialPlanetshine(upNormal, uniforms, this._planetshineScratchColor)
+      : this._planetshineScratchColor.setRGB(0, 0, 0);
+    const pIntensity = Math.max(planetshineColor.r, planetshineColor.g, planetshineColor.b);
+
     const atmo = body.terrainProfile?.atmosphere;
     if (atmo) {
       const density = THREE.MathUtils.clamp(atmo.density, 0.3, 1.6);
@@ -295,13 +311,29 @@ export class Game {
       const twilight = 1 - THREE.MathUtils.smoothstep(Math.abs(sun), 0.0, 0.35);
       this._skyColor.setHex(atmo.color).lerp(this._sunsetColor.setHex(atmo.sunsetColor ?? atmo.color), twilight * 0.7);
       const strength = Math.min(1.1, density * variation);
+
+      // Tint sky glow with planetshine in the primary color
+      if (pIntensity > 1e-4) {
+        this._skyColor.lerp(planetshineColor, Math.min(0.95, pIntensity * 2.0));
+      }
       this.skyLight.color.copy(this._skyColor);
-      this.skyLight.intensity = near * strength * (0.3 * shadowFactor + 0.45 * night);
+      // Flat ambient floor stays subtle (0.20 max in daylight, 0.08 at night);
+      // moonshine / planetshine dynamically adds subtle secondary sky fill
+      const atmoBase = near * strength * (0.22 * shadowFactor + 0.08 * night);
+      const atmoIntensity = Math.min(0.20, atmoBase) + near * pIntensity * 0.30;
+      this.skyLight.intensity = Math.min(0.22, atmoIntensity);
     } else {
-      this.skyLight.color.setHex(0x8a96b8);
-      this.skyLight.intensity = near * night * 0.8 * shadowFactor;
+      // Rocky / airless worlds (e.g. moons): dark night (0.03 starlight) + dynamic primary-color shine
+      this._skyColor.setHex(0x8a96b8);
+      if (pIntensity > 1e-4) {
+        this._skyColor.lerp(planetshineColor, Math.min(0.95, pIntensity * 2.5));
+      }
+      this.skyLight.color.copy(this._skyColor);
+      const rockyBase = near * (0.03 * night * shadowFactor);
+      const rockyIntensity = Math.min(0.20, rockyBase) + near * pIntensity * 0.40;
+      this.skyLight.intensity = Math.min(0.22, rockyIntensity);
     }
-    const darkness = Math.max(near * night, near * (1.0 - shadowFactor));
+    const darkness = Math.max(near * night * Math.max(0.15, 1.0 - pIntensity * 1.5), near * (1.0 - shadowFactor));
     return darkness;
   }
 
@@ -317,7 +349,7 @@ export class Game {
       // Held a little above head height so it lights the ground evenly all around
       const up = this._v3.copy(this.camera.position).sub(nearest ? nearest.body.position : this.camera.position).normalize();
       this.lantern.position.copy(this.camera.position).addScaledVector(up, 0.006);
-      this.lantern.intensity = 0.35;
+      this.lantern.intensity = 0.50;
     } else {
       this.lantern.intensity = 0;
     }

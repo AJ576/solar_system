@@ -127,7 +127,11 @@ export function createAtmosphere({ planetRadius, config, sun = null }) {
         vec3 midPos = ro + rd * (0.5 * (t0 + t1)) + uCenter;
         float atmoShadow = calculateEclipseShadow(midPos);
 
-        vec3 color = light * phase * 1.6 * atmoShadow;
+        // Planetshine scattering on night-side atmosphere
+        float pScatter = clamp((dot(rd, uPlanetshineDir) + 0.3) / 1.3, 0.0, 1.0);
+        vec3 pLight = uPlanetshineColor * (pScatter * optical * 0.5);
+
+        vec3 color = (light * phase * 1.6 + pLight) * atmoShadow;
         float dayFrac = optical > 0.0 ? (dayAccum / optical) * atmoShadow : 0.0;
         float alpha = (1.0 - exp(-optical * 1.2)) * mix(0.25, 0.9, dayFrac);
 
