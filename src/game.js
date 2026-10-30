@@ -609,7 +609,8 @@ export class Game {
       isCruise: this.controls.mode === 'cruise',
       atmoDensity,
       altitude: nearest ? nearest.altitude : Infinity,
-      bodyRadius: nearest?.body ? nearest.body.radius : 1
+      bodyRadius: nearest?.body ? nearest.body.radius : 1,
+      nearestBody: nearest?.body || null
     });
 
     if (this.mode === 'foot') {

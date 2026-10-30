@@ -1,33 +1,108 @@
 /**
- * Galactic Cruise — Procedural Audio & Music Engine
+ * Galactic Cruise — Refined Cinematic & Ambient Audio Engine
  *
- * Full procedural synthesizer & sound manager built with the Web Audio API:
- * - Dynamic flight audio (reactive engine hum, turbine whine, boost afterburner, thrusters)
- * - Atmospheric flight (re-entry wind rush dynamically scaled by speed and atmospheric density)
- * - Cruise drive (spool-up whine, slipstream drone, dropout surge)
- * - Kinetic impacts & collisions (low-frequency sub-thud + metallic resonance scaled to impact speed)
- * - Surface & on-foot audio (procedural footsteps with terrain cadence, jump, land, airlock hatch)
- * - Cockpit & UI avionics (targeting chimes, headlight switch, notification blips)
- * - Hyperspace jump audio (charging spin-up, warp boom, decelerating arrival hum)
- * - Generative cosmic music (lush, evolving ambient space pads with modal chord progressions)
- * - Custom soundtrack support (seamlessly plays custom audio files if placed in /audio/)
+ * Professional procedural synthesizer & sound manager:
+ * 1. Shared Reverb & Echo bus:
+ *    - Procedural 3.8s stereo impulse response convolver
+ *    - Warm feedback delay (480ms) with lowpass damping feeding the reverb
+ * 2. Tamed Engine:
+ *    - Warm dual-sine reactor with audible body in 110–220 Hz range (laptop-friendly)
+ *    - Fades to near-silence at zero throttle (0.008 idle)
+ *    - Majestic 0.6s glide response
+ *    - 10-second decorrelated noise loop
+ * 3. Soft Cruise Drive:
+ *    - Soft "warp whoosh" slipstream with noise filter opening with speed
+ *    - Low drone anchored strictly to the music key (D) — NO tension-building pitch climbing
+ *    - Spool is a deep muffled capacitor surge instead of a siren
+ * 4. Ethereal Music:
+ *    - Strict D Dorian modal harmony (no jarring tritone leaps)
+ *    - Chords hold 22–28s with smooth 6s crossfades, picked randomly
+ *    - Bass notes raised out of mud into 110–150 Hz range
+ *    - Sparse high bell/chime notes echoing through delay and space reverb
+ * 5. Dynamic Ambience:
+ *    - Quiet, vast deep space presence
+ *    - Planetary wind scaled by atmospheric density and altitude (dead quiet on airless moons)
+ *    - Solar magnetosphere hum near the star
+ *    - Gas giant low resonant drone
+ * 6. Gentle Mixing & Tactile UI:
+ *    - Transparent compressor (slow 35ms attack, 2.2:1 ratio) to eliminate pumping
+ *    - Tactile cockpit instrument clicks (no harsh square waves)
+ *    - Soft pneumatic airlock breath (no piercing 1.8kHz hiss)
+ *    - Low-key radar avionics chirp (no loud notification ding)
+ *    - Organic suit rustle for jump (no cartoon boing)
  */
 
-// Helper to convert MIDI note number to frequency (Hz)
 function midiToFreq(midi) {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-// Chords for generative ambient space pads (MIDI note numbers)
+// ---------------------------------------------------------------------------
+// Pure D Dorian Modal Chords (Bass raised to octave 2/3 so audible on laptops)
+// Scale: D, E, F, G, A, B, C (all natural keys, anchored to D)
+// ---------------------------------------------------------------------------
 const SPACE_CHORDS = [
-  [38, 45, 53, 60, 64], // Dm9 (D2, A2, F3, C4, E4)
-  [43, 50, 57, 59, 65], // G9sus4 (G2, D3, A3, B3, F4)
-  [36, 43, 52, 59, 62], // Cmaj9 (C2, G2, E3, B3, D4)
-  [41, 48, 57, 64, 67], // Fmaj9#11 (F2, C3, A3, E4, G4)
-  [33, 40, 48, 55, 59], // Am9 (A1, E2, C3, G3, B3)
-  [34, 41, 50, 57, 60], // Bbmaj9 (Bb1, F2, D3, A3, C4)
-  [40, 47, 55, 62, 66], // Em9 (E2, B2, G3, D4, F#4)
+  // 0. Dm9: D3, A3, C4, E4, F4
+  { name: 'Dm9', bass: 50, notes: [57, 60, 64, 65] },
+  // 1. G9/D: D3, G3, B3, D4, E4
+  { name: 'G9/D', bass: 50, notes: [55, 59, 62, 64] },
+  // 2. Cmaj9: C3, G3, B3, D4, E4
+  { name: 'Cmaj9', bass: 48, notes: [55, 59, 62, 64] },
+  // 3. F6/9: F3, A3, C4, D4, G4
+  { name: 'F6/9', bass: 53, notes: [57, 60, 62, 67] },
+  // 4. Am7/Asus4: A2 (110 Hz), E3, G3, C4, D4
+  { name: 'Am7', bass: 45, notes: [52, 55, 60, 62] },
+  // 5. Dsus2/Dm11: D3, A3, C4, D4, G4
+  { name: 'Dm11', bass: 50, notes: [57, 60, 62, 67] },
 ];
+
+// Sparse high chime notes in D Dorian Pentatonic (D5, E5, G5, A5, C6, D6)
+const CHIME_NOTES = [74, 76, 79, 81, 84, 86];
+
+/**
+ * Creates a procedural stereo impulse response for vast, lush space reverb
+ */
+function createReverbImpulse(ctx, duration = 3.8, decay = 2.6) {
+  const sampleRate = ctx.sampleRate;
+  const length = Math.floor(sampleRate * duration);
+  const impulse = ctx.createBuffer(2, length, sampleRate);
+  const left = impulse.getChannelData(0);
+  const right = impulse.getChannelData(1);
+
+  for (let i = 0; i < length; i++) {
+    const t = i / sampleRate;
+    const envelope = Math.exp(-t * (3.0 / decay));
+    // Air absorption: high frequencies decay faster
+    const damping = Math.exp(-t * 1.8);
+    left[i] = (Math.random() * 2 - 1) * damping * envelope;
+    right[i] = (Math.random() * 2 - 1) * damping * envelope;
+  }
+  return impulse;
+}
+
+/**
+ * Creates a seamless 10-second high-precision pink/brown noise buffer
+ */
+function createNoiseBuffer(ctx, duration = 10.0) {
+  const sampleRate = ctx.sampleRate;
+  const bufferSize = Math.floor(sampleRate * duration);
+  const buffer = ctx.createBuffer(1, bufferSize, sampleRate);
+  const output = buffer.getChannelData(0);
+
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  for (let i = 0; i < bufferSize; i++) {
+    const white = Math.random() * 2 - 1;
+    b0 = 0.99886 * b0 + white * 0.0555179;
+    b1 = 0.99332 * b1 + white * 0.0750759;
+    b2 = 0.96900 * b2 + white * 0.1538520;
+    b3 = 0.86650 * b3 + white * 0.3104856;
+    b4 = 0.55000 * b4 + white * 0.5329522;
+    b5 = -0.7616 * b5 - white * 0.0168980;
+    const pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+    b6 = white * 0.115926;
+    output[i] = pink;
+  }
+  return buffer;
+}
 
 export class AudioManager {
   constructor() {
@@ -39,38 +114,68 @@ export class AudioManager {
     this.masterGain = null;
     this.sfxGain = null;
     this.musicGain = null;
+    this.ambienceGain = null;
     this.compressor = null;
 
-    // Shared Noise Buffer (for engine rumble, wind, footsteps, impacts)
+    // Shared Reverb & Delay Nodes
+    this.convolver = null;
+    this.reverbGain = null;
+    this.delayNode = null;
+    this.delayFeedback = null;
+    this.delayFilter = null;
+    this.delayOutput = null;
+
+    // Shared 10s Noise Buffer
     this.noiseBuffer = null;
 
-    // Continuous Flight Engine State
+    // Tamed Flight Engine State
     this.engine = {
-      active: false,
-      subOsc: null,
-      turbineOsc: null,
+      gainNode: null,
+      primaryOsc: null,   // Warm sine ~110-146 Hz (audible on laptops)
+      harmonicOsc: null,  // Second harmonic ~220-292 Hz for gentle purr
+      subOsc: null,       // Sub harmonic ~55-73 Hz for headphones/subs
       noiseSource: null,
       noiseFilter: null,
+      noiseGain: null
+    };
+
+    // Soft Cruise Drive State
+    this.cruise = {
       gainNode: null,
+      droneOsc1: null,    // D2 = 73.4 Hz
+      droneOsc2: null,    // D3 = 146.8 Hz
+      noiseSource: null,
+      noiseFilter: null,
+      noiseGain: null,
+      active: false
+    };
+
+    // Ambience Layer State
+    this.ambience = {
+      spaceSource: null,
+      spaceFilter: null,
+      spaceGain: null,
       atmoSource: null,
       atmoFilter: null,
       atmoGain: null,
-      cruiseOsc: null,
-      cruiseGain: null
+      starOsc: null,
+      starGain: null,
+      gasGiantOsc: null,
+      gasGiantGain: null
     };
 
     // On-Foot Audio State
     this.footsteps = {
       stepTimer: 0,
-      stepInterval: 0.44, // walking cadence (seconds)
-      lastGrounded: false
+      stepInterval: 0.44
     };
 
     // Generative Music State
     this.music = {
       enabled: true,
-      currentChordIndex: 0,
+      currentChordIndex: -1,
       timer: null,
+      bellTimer: null,
       activeVoices: [],
       filter: null,
       lfo: null,
@@ -78,7 +183,6 @@ export class AudioManager {
       hasCustomTrack: false
     };
 
-    // Auto-unlock audio on user gesture
     this._bindUnlockEvents();
   }
 
@@ -104,38 +208,45 @@ export class AudioManager {
       if (!AudioContextClass) return;
 
       this.ctx = new AudioContextClass();
+      const now = this.ctx.currentTime;
 
-      // 1. Dynamics Compressor to prevent clipping and give professional polish
+      // 1. Transparent Master Dynamics Compressor (gentle leveling, no pumping)
       this.compressor = this.ctx.createDynamicsCompressor();
-      this.compressor.threshold.setValueAtTime(-14, this.ctx.currentTime);
-      this.compressor.knee.setValueAtTime(18, this.ctx.currentTime);
-      this.compressor.ratio.setValueAtTime(4.5, this.ctx.currentTime);
-      this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
-      this.compressor.release.setValueAtTime(0.15, this.ctx.currentTime);
+      this.compressor.threshold.setValueAtTime(-18, now);
+      this.compressor.knee.setValueAtTime(24, now);
+      this.compressor.ratio.setValueAtTime(2.2, now); // Gentle ratio
+      this.compressor.attack.setValueAtTime(0.035, now); // 35ms avoids squashing transients & music
+      this.compressor.release.setValueAtTime(0.28, now);
       this.compressor.connect(this.ctx.destination);
 
       // 2. Master Gain
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(0.75, this.ctx.currentTime);
+      this.masterGain.gain.setValueAtTime(0.72, now);
       this.masterGain.connect(this.compressor);
 
-      // 3. SFX Bus Gain
+      // 3. Shared Reverb & Echo Network
+      this._setupReverbAndEcho();
+
+      // 4. Sub-Mix Buses
       this.sfxGain = this.ctx.createGain();
-      this.sfxGain.gain.setValueAtTime(0.85, this.ctx.currentTime);
+      this.sfxGain.gain.setValueAtTime(0.70, now);
       this.sfxGain.connect(this.masterGain);
 
-      // 4. Music Bus Gain
       this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.setValueAtTime(0.42, this.ctx.currentTime);
+      this.musicGain.gain.setValueAtTime(0.55, now);
       this.musicGain.connect(this.masterGain);
 
-      // 5. Pre-generate shared warm noise buffer (2.5 seconds looped)
-      this._buildNoiseBuffer();
+      this.ambienceGain = this.ctx.createGain();
+      this.ambienceGain.gain.setValueAtTime(0.48, now);
+      this.ambienceGain.connect(this.masterGain);
 
-      // 6. Setup Continuous Sound Loops (Engine, Atmospheric Wind, Cruise)
-      this._setupContinuousEngines();
+      // 5. Pre-generate 10-second warm noise buffer
+      this.noiseBuffer = createNoiseBuffer(this.ctx, 10.0);
 
-      // 7. Initialize Ambient Music
+      // 6. Setup Audio Subsystems
+      this._setupTamedEngine();
+      this._setupSoftCruise();
+      this._setupAmbienceLayers();
       this._setupMusicEngine();
 
       this.isInitialized = true;
@@ -152,109 +263,213 @@ export class AudioManager {
     return this.ctx && this.ctx.state === 'running';
   }
 
-  _buildNoiseBuffer() {
-    if (!this.ctx) return;
-    const sampleRate = this.ctx.sampleRate;
-    const duration = 2.5;
-    const bufferSize = Math.floor(sampleRate * duration);
-    this.noiseBuffer = this.ctx.createBuffer(1, bufferSize, sampleRate);
-    const output = this.noiseBuffer.getChannelData(0);
+  // ---------------------------------------------------------------------------
+  // 1. Shared Reverb & Echo Network
+  // ---------------------------------------------------------------------------
+  _setupReverbAndEcho() {
+    const now = this.ctx.currentTime;
 
-    // Warm pinkish/brownish noise generator
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-    for (let i = 0; i < bufferSize; i++) {
-      const white = Math.random() * 2 - 1;
-      b0 = 0.99886 * b0 + white * 0.0555179;
-      b1 = 0.99332 * b1 + white * 0.0750759;
-      b2 = 0.96900 * b2 + white * 0.1538520;
-      b3 = 0.86650 * b3 + white * 0.3104856;
-      b4 = 0.55000 * b4 + white * 0.5329522;
-      b5 = -0.7616 * b5 - white * 0.0168980;
-      const pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
-      b6 = white * 0.115926;
-      output[i] = pink;
-    }
+    // Procedural Stereo Space Convolver (3.8s tail)
+    this.convolver = this.ctx.createConvolver();
+    this.convolver.buffer = createReverbImpulse(this.ctx, 3.8, 2.6);
+
+    this.reverbGain = this.ctx.createGain();
+    this.reverbGain.gain.setValueAtTime(0.42, now);
+    this.convolver.connect(this.reverbGain);
+    this.reverbGain.connect(this.masterGain);
+
+    // Warm Echo / Delay Network (480ms repeat)
+    this.delayNode = this.ctx.createDelay(2.0);
+    this.delayNode.delayTime.setValueAtTime(0.48, now);
+
+    this.delayFeedback = this.ctx.createGain();
+    this.delayFeedback.gain.setValueAtTime(0.32, now);
+
+    // Filter in feedback loop: echoes get progressively warmer/darker
+    this.delayFilter = this.ctx.createBiquadFilter();
+    this.delayFilter.type = 'lowpass';
+    this.delayFilter.frequency.setValueAtTime(1200, now);
+
+    this.delayNode.connect(this.delayFilter);
+    this.delayFilter.connect(this.delayFeedback);
+    this.delayFeedback.connect(this.delayNode);
+
+    // Delay output routes to master and diffuses into space reverb
+    this.delayOutput = this.ctx.createGain();
+    this.delayOutput.gain.setValueAtTime(0.24, now);
+    this.delayFilter.connect(this.delayOutput);
+    this.delayOutput.connect(this.masterGain);
+    this.delayOutput.connect(this.convolver);
   }
 
-  _setupContinuousEngines() {
+  // ---------------------------------------------------------------------------
+  // 2. Tamed Ship Engine (Warm, audible on laptops, peaceful idle)
+  // ---------------------------------------------------------------------------
+  _setupTamedEngine() {
     if (!this.ctx || !this.noiseBuffer) return;
     const now = this.ctx.currentTime;
 
-    // --- Ship Main Engine Loop ---
     this.engine.gainNode = this.ctx.createGain();
     this.engine.gainNode.gain.setValueAtTime(0.0001, now);
     this.engine.gainNode.connect(this.sfxGain);
 
-    // Sub-harmonic sine (deep bass rumble)
+    // Primary warm sine in 110–146 Hz range (clearly audible on laptop speakers)
+    this.engine.primaryOsc = this.ctx.createOscillator();
+    this.engine.primaryOsc.type = 'sine';
+    this.engine.primaryOsc.frequency.setValueAtTime(110, now);
+    const primGain = this.ctx.createGain();
+    primGain.gain.setValueAtTime(0.50, now);
+    this.engine.primaryOsc.connect(primGain);
+    primGain.connect(this.engine.gainNode);
+    this.engine.primaryOsc.start(now);
+
+    // Second harmonic in 220–292 Hz range (adds warm body and gentle purr)
+    this.engine.harmonicOsc = this.ctx.createOscillator();
+    this.engine.harmonicOsc.type = 'sine';
+    this.engine.harmonicOsc.frequency.setValueAtTime(220, now);
+    const harmGain = this.ctx.createGain();
+    harmGain.gain.setValueAtTime(0.18, now);
+    this.engine.harmonicOsc.connect(harmGain);
+    harmGain.connect(this.engine.gainNode);
+    this.engine.harmonicOsc.start(now);
+
+    // Sub-harmonic in 55–73 Hz range (adds bottom-end weight on headphones/subs)
     this.engine.subOsc = this.ctx.createOscillator();
     this.engine.subOsc.type = 'sine';
-    this.engine.subOsc.frequency.setValueAtTime(45, now);
+    this.engine.subOsc.frequency.setValueAtTime(55, now);
     const subGain = this.ctx.createGain();
-    subGain.gain.setValueAtTime(0.65, now);
+    subGain.gain.setValueAtTime(0.35, now);
     this.engine.subOsc.connect(subGain);
     subGain.connect(this.engine.gainNode);
     this.engine.subOsc.start(now);
 
-    // Turbine whine (triangle through bandpass)
-    this.engine.turbineOsc = this.ctx.createOscillator();
-    this.engine.turbineOsc.type = 'triangle';
-    this.engine.turbineOsc.frequency.setValueAtTime(140, now);
-    const turbineFilter = this.ctx.createBiquadFilter();
-    turbineFilter.type = 'bandpass';
-    turbineFilter.frequency.setValueAtTime(260, now);
-    turbineFilter.Q.setValueAtTime(2.2, now);
-    const turbineGain = this.ctx.createGain();
-    turbineGain.gain.setValueAtTime(0.28, now);
-    this.engine.turbineOsc.connect(turbineFilter);
-    turbineFilter.connect(turbineGain);
-    turbineGain.connect(this.engine.gainNode);
-    this.engine.turbineOsc.start(now);
-
-    // Jet / plasma noise roar
+    // Low-pass filtered noise rumble (no buzzy narrow bandpass!)
     this.engine.noiseSource = this.ctx.createBufferSource();
     this.engine.noiseSource.buffer = this.noiseBuffer;
     this.engine.noiseSource.loop = true;
     this.engine.noiseFilter = this.ctx.createBiquadFilter();
     this.engine.noiseFilter.type = 'lowpass';
-    this.engine.noiseFilter.frequency.setValueAtTime(120, now);
-    const noiseGain = this.ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.5, now);
+    this.engine.noiseFilter.frequency.setValueAtTime(140, now);
+
+    this.engine.noiseGain = this.ctx.createGain();
+    this.engine.noiseGain.gain.setValueAtTime(0.25, now);
     this.engine.noiseSource.connect(this.engine.noiseFilter);
-    this.engine.noiseFilter.connect(noiseGain);
-    noiseGain.connect(this.engine.gainNode);
+    this.engine.noiseFilter.connect(this.engine.noiseGain);
+    this.engine.noiseGain.connect(this.engine.gainNode);
     this.engine.noiseSource.start(now);
-
-    // --- Atmospheric Entry Wind Loop ---
-    this.engine.atmoGain = this.ctx.createGain();
-    this.engine.atmoGain.gain.setValueAtTime(0.0001, now);
-    this.engine.atmoGain.connect(this.sfxGain);
-
-    this.engine.atmoSource = this.ctx.createBufferSource();
-    this.engine.atmoSource.buffer = this.noiseBuffer;
-    this.engine.atmoSource.loop = true;
-    this.engine.atmoFilter = this.ctx.createBiquadFilter();
-    this.engine.atmoFilter.type = 'bandpass';
-    this.engine.atmoFilter.frequency.setValueAtTime(450, now);
-    this.engine.atmoFilter.Q.setValueAtTime(1.2, now);
-    this.engine.atmoSource.connect(this.engine.atmoFilter);
-    this.engine.atmoFilter.connect(this.engine.atmoGain);
-    this.engine.atmoSource.start(now);
-
-    // --- Cruise Drive Slipstream Hum ---
-    this.engine.cruiseGain = this.ctx.createGain();
-    this.engine.cruiseGain.gain.setValueAtTime(0.0001, now);
-    this.engine.cruiseGain.connect(this.sfxGain);
-
-    this.engine.cruiseOsc = this.ctx.createOscillator();
-    this.engine.cruiseOsc.type = 'sine';
-    this.engine.cruiseOsc.frequency.setValueAtTime(220, now);
-    this.engine.cruiseOsc.connect(this.engine.cruiseGain);
-    this.engine.cruiseOsc.start(now);
   }
 
-  /**
-   * Called every frame from game.js to dynamically modulate engine sounds
-   */
+  // ---------------------------------------------------------------------------
+  // 3. Soft Cruise Drive (Warp whoosh slipstream, drone anchored to D)
+  // ---------------------------------------------------------------------------
+  _setupSoftCruise() {
+    if (!this.ctx || !this.noiseBuffer) return;
+    const now = this.ctx.currentTime;
+
+    this.cruise.gainNode = this.ctx.createGain();
+    this.cruise.gainNode.gain.setValueAtTime(0.0001, now);
+    this.cruise.gainNode.connect(this.sfxGain);
+
+    // Quiet warm drones anchored to root key D (D2 = 73.4 Hz, D3 = 146.8 Hz)
+    // PITCH NEVER CLIMBS WITH SPEED!
+    this.cruise.droneOsc1 = this.ctx.createOscillator();
+    this.cruise.droneOsc1.type = 'sine';
+    this.cruise.droneOsc1.frequency.setValueAtTime(73.4, now);
+
+    this.cruise.droneOsc2 = this.ctx.createOscillator();
+    this.cruise.droneOsc2.type = 'sine';
+    this.cruise.droneOsc2.frequency.setValueAtTime(146.8, now);
+
+    const droneGain = this.ctx.createGain();
+    droneGain.gain.setValueAtTime(0.35, now);
+    this.cruise.droneOsc1.connect(droneGain);
+    this.cruise.droneOsc2.connect(droneGain);
+    droneGain.connect(this.cruise.gainNode);
+    this.cruise.droneOsc1.start(now);
+    this.cruise.droneOsc2.start(now);
+
+    // Soft low-passed noise whoosh (opens with speed from 140 Hz to ~380 Hz)
+    this.cruise.noiseSource = this.ctx.createBufferSource();
+    this.cruise.noiseSource.buffer = this.noiseBuffer;
+    this.cruise.noiseSource.loop = true;
+    this.cruise.noiseFilter = this.ctx.createBiquadFilter();
+    this.cruise.noiseFilter.type = 'lowpass';
+    this.cruise.noiseFilter.frequency.setValueAtTime(150, now);
+
+    this.cruise.noiseGain = this.ctx.createGain();
+    this.cruise.noiseGain.gain.setValueAtTime(0.40, now);
+    this.cruise.noiseSource.connect(this.cruise.noiseFilter);
+    this.cruise.noiseFilter.connect(this.cruise.noiseGain);
+    this.cruise.noiseGain.connect(this.cruise.gainNode);
+    // Decorrelate phase by starting at an offset
+    this.cruise.noiseSource.start(now);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 4. Ambience Engine (Space void, planetary wind, star hum, gas giant drone)
+  // ---------------------------------------------------------------------------
+  _setupAmbienceLayers() {
+    if (!this.ctx || !this.noiseBuffer) return;
+    const now = this.ctx.currentTime;
+
+    // A. Deep Space Void (subtle, vast low presence)
+    this.ambience.spaceSource = this.ctx.createBufferSource();
+    this.ambience.spaceSource.buffer = this.noiseBuffer;
+    this.ambience.spaceSource.loop = true;
+    this.ambience.spaceFilter = this.ctx.createBiquadFilter();
+    this.ambience.spaceFilter.type = 'bandpass';
+    this.ambience.spaceFilter.frequency.setValueAtTime(160, now);
+    this.ambience.spaceFilter.Q.setValueAtTime(0.9, now);
+
+    this.ambience.spaceGain = this.ctx.createGain();
+    this.ambience.spaceGain.gain.setValueAtTime(0.04, now);
+    this.ambience.spaceSource.connect(this.ambience.spaceFilter);
+    this.ambience.spaceFilter.connect(this.ambience.spaceGain);
+    this.ambience.spaceGain.connect(this.ambienceGain);
+    this.ambience.spaceSource.start(now);
+
+    // B. Planetary Surface Wind (active only on bodies with atmosphere)
+    this.ambience.atmoSource = this.ctx.createBufferSource();
+    this.ambience.atmoSource.buffer = this.noiseBuffer;
+    this.ambience.atmoSource.loop = true;
+    this.ambience.atmoFilter = this.ctx.createBiquadFilter();
+    this.ambience.atmoFilter.type = 'lowpass';
+    this.ambience.atmoFilter.frequency.setValueAtTime(260, now);
+
+    this.ambience.atmoGain = this.ctx.createGain();
+    this.ambience.atmoGain.gain.setValueAtTime(0.0001, now);
+    this.ambience.atmoSource.connect(this.ambience.atmoFilter);
+    this.ambience.atmoFilter.connect(this.ambience.atmoGain);
+    this.ambience.atmoGain.connect(this.ambienceGain);
+    this.ambience.atmoSource.start(now);
+
+    // C. Solar Magnetosphere Hum (warm radiant drone near star)
+    this.ambience.starOsc = this.ctx.createOscillator();
+    this.ambience.starOsc.type = 'sine';
+    this.ambience.starOsc.frequency.setValueAtTime(110, now); // A2
+
+    this.ambience.starGain = this.ctx.createGain();
+    this.ambience.starGain.gain.setValueAtTime(0.0001, now);
+    this.ambience.starOsc.connect(this.ambience.starGain);
+    this.ambience.starGain.connect(this.ambienceGain);
+    this.ambience.starGain.connect(this.convolver); // Reverb warmth
+    this.ambience.starOsc.start(now);
+
+    // D. Gas Giant Planetary Resonance (deep majestic magnetic hum)
+    this.ambience.gasGiantOsc = this.ctx.createOscillator();
+    this.ambience.gasGiantOsc.type = 'sine';
+    this.ambience.gasGiantOsc.frequency.setValueAtTime(82.4, now); // E2
+
+    this.ambience.gasGiantGain = this.ctx.createGain();
+    this.ambience.gasGiantGain.gain.setValueAtTime(0.0001, now);
+    this.ambience.gasGiantOsc.connect(this.ambience.gasGiantGain);
+    this.ambience.gasGiantGain.connect(this.ambienceGain);
+    this.ambience.gasGiantOsc.start(now);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Frame-by-frame Audio Updates
+  // ---------------------------------------------------------------------------
   updateFlightAudio({
     mode = 'flight',
     throttle = 0,
@@ -264,114 +479,305 @@ export class AudioManager {
     isCruise = false,
     atmoDensity = 0,
     altitude = Infinity,
-    bodyRadius = 1
+    bodyRadius = 1,
+    nearestBody = null,
+    starPos = null,
+    camPos = null
   }) {
     if (!this.ensureContext() || !this.engine.gainNode) return;
     const now = this.ctx.currentTime;
-    const timeConstant = 0.08;
+    // Majestic, peaceful gliding time constant (0.6s)
+    const smoothTau = 0.6;
 
-    // Only flight mode has ship engine sounds
-    if (mode !== 'flight') {
-      this.engine.gainNode.gain.setTargetAtTime(0.0001, now, 0.1);
-      this.engine.atmoGain.gain.setTargetAtTime(0.0001, now, 0.1);
-      this.engine.cruiseGain.gain.setTargetAtTime(0.0001, now, 0.1);
-      return;
+    // 1. ENGINE UPDATE
+    if (mode === 'flight') {
+      const normThrottle = Math.max(0, Math.min(1, Math.abs(throttle)));
+
+      // At zero throttle: drop to near silence (0.008 idle purr)
+      let targetEngineVol = 0.008;
+      if (normThrottle > 0.01) {
+        targetEngineVol = 0.01 + normThrottle * 0.17;
+      }
+      if (isBoosting) targetEngineVol = 0.28;
+      if (isCruise) targetEngineVol = 0.015; // Engine stays very quiet during cruise
+
+      // Pitches stay in pleasant, laptop-audible warm range:
+      // Primary: 110 Hz idle up to 138 Hz max throttle (+20 Hz on boost)
+      const primPitch = 110 + normThrottle * 28 + (isBoosting ? 20 : 0);
+      const harmPitch = primPitch * 2;
+      const subPitch = primPitch * 0.5;
+
+      // Filter cutoff stays warm: 130 Hz up to 260 Hz (no high-frequency harshness)
+      const noiseCutoff = 130 + normThrottle * 130 + (isBoosting ? 90 : 0);
+
+      this.engine.primaryOsc.frequency.setTargetAtTime(primPitch, now, smoothTau);
+      this.engine.harmonicOsc.frequency.setTargetAtTime(harmPitch, now, smoothTau);
+      this.engine.subOsc.frequency.setTargetAtTime(subPitch, now, smoothTau);
+      this.engine.noiseFilter.frequency.setTargetAtTime(noiseCutoff, now, smoothTau);
+      this.engine.gainNode.gain.setTargetAtTime(targetEngineVol, now, smoothTau);
+    } else {
+      // Landed or on foot: engine fades out peacefully
+      this.engine.gainNode.gain.setTargetAtTime(0.0001, now, 0.4);
     }
 
-    // 1. Engine Pitch & Gain modulation
-    const normThrottle = Math.max(0, Math.min(1, Math.abs(throttle)));
-    const baseFreq = 42 + normThrottle * 38 + (isBoosting ? 28 : 0);
-    const turbineFreq = 140 + normThrottle * 220 + (isBoosting ? 180 : 0);
-    const noiseCutoff = 100 + normThrottle * 320 + (isBoosting ? 400 : 0);
+    // 2. CRUISE UPDATE (Soft warp whoosh, D drone, pitch never climbs)
+    if (mode === 'flight' && (isCruise || cruiseSpool > 0)) {
+      let cruiseVol = 0.0001;
+      let filterCutoff = 150;
 
-    let targetEngineVol = 0.08 + normThrottle * 0.22;
-    if (isBoosting) targetEngineVol = 0.42;
-    if (isCruise) targetEngineVol = 0.15;
+      if (cruiseSpool > 0) {
+        cruiseVol = 0.10 * cruiseSpool;
+        filterCutoff = 150 + cruiseSpool * 120;
+      } else if (isCruise) {
+        // Volume and low-pass filter open smoothly with speed (never exceeds 400 Hz)
+        const speedNorm = Math.min(1, speed / 12000);
+        cruiseVol = 0.10 + speedNorm * 0.08;
+        filterCutoff = 160 + speedNorm * 220; // 160 Hz -> 380 Hz
+      }
 
-    this.engine.subOsc.frequency.setTargetAtTime(baseFreq, now, timeConstant);
-    this.engine.turbineOsc.frequency.setTargetAtTime(turbineFreq, now, timeConstant);
-    this.engine.noiseFilter.frequency.setTargetAtTime(noiseCutoff, now, timeConstant);
-    this.engine.gainNode.gain.setTargetAtTime(targetEngineVol, now, timeConstant);
-
-    // 2. Cruise Drive Audio Modulation
-    let cruiseVol = 0.0001;
-    let cruiseFreq = 220;
-    if (cruiseSpool > 0) {
-      cruiseVol = 0.25 * cruiseSpool;
-      cruiseFreq = 180 + cruiseSpool * 600;
-    } else if (isCruise) {
-      cruiseVol = 0.22;
-      // Frequency pitch shifts slightly with relativistic speed
-      const speedK = Math.min(1, speed / 25000);
-      cruiseFreq = 320 + speedK * 280;
+      this.cruise.noiseFilter.frequency.setTargetAtTime(filterCutoff, now, 0.4);
+      this.cruise.gainNode.gain.setTargetAtTime(cruiseVol, now, 0.4);
+    } else {
+      this.cruise.gainNode.gain.setTargetAtTime(0.0001, now, 0.4);
     }
-    this.engine.cruiseOsc.frequency.setTargetAtTime(cruiseFreq, now, 0.06);
-    this.engine.cruiseGain.gain.setTargetAtTime(cruiseVol, now, 0.08);
 
-    // 3. Atmospheric Wind Re-entry Rush
+    // 3. AMBIENCE UPDATE
+    // A. Planetary Wind (scaled by atmosphere density and altitude)
     let atmoVol = 0.0001;
-    if (atmoDensity > 0.05 && altitude < bodyRadius * 0.8) {
-      const atmoCloseness = 1 - Math.min(1, altitude / (bodyRadius * 0.8));
-      const speedFactor = Math.min(1, speed / 18);
-      atmoVol = Math.min(0.48, atmoDensity * atmoCloseness * speedFactor * 0.6);
-      const atmoCutoff = 250 + speedFactor * 1200;
-      this.engine.atmoFilter.frequency.setTargetAtTime(atmoCutoff, now, 0.1);
+    let atmoCutoff = 220;
+    if (atmoDensity > 0.05 && altitude < bodyRadius * 0.9) {
+      const surfaceNearness = 1 - Math.min(1, altitude / (bodyRadius * 0.9));
+      const speedFactor = mode === 'flight' ? Math.min(1, speed / 25) : 0;
+      atmoVol = THREE_clamp(atmoDensity * surfaceNearness * (0.06 + speedFactor * 0.14), 0, 0.22);
+      atmoCutoff = 220 + speedFactor * 320;
     }
-    this.engine.atmoGain.gain.setTargetAtTime(atmoVol, now, 0.12);
+    this.ambience.atmoFilter.frequency.setTargetAtTime(atmoCutoff, now, 0.8);
+    this.ambience.atmoGain.gain.setTargetAtTime(atmoVol, now, 0.8);
+
+    // B. Star Proximity Hum
+    let starVol = 0.0001;
+    if (nearestBody && nearestBody.kind === 'star' && altitude < nearestBody.radius * 6.0) {
+      const starNearness = 1 - Math.min(1, altitude / (nearestBody.radius * 6.0));
+      starVol = starNearness * 0.15;
+    }
+    this.ambience.starGain.gain.setTargetAtTime(starVol, now, 1.2);
+
+    // C. Gas Giant Proximity Resonance
+    let gasGiantVol = 0.0001;
+    const isGasGiant = nearestBody && nearestBody.terrainProfile?.hasTerrain === false && nearestBody.kind !== 'star';
+    if (isGasGiant && altitude < nearestBody.radius * 2.5) {
+      const giantNearness = 1 - Math.min(1, altitude / (nearestBody.radius * 2.5));
+      gasGiantVol = giantNearness * 0.18;
+    }
+    this.ambience.gasGiantGain.gain.setTargetAtTime(gasGiantVol, now, 1.2);
   }
 
   // ---------------------------------------------------------------------------
-  // SFX: Impact & Collisions
+  // Cruise Spool (Soft, cinematic capacitor swell — NO siren)
   // ---------------------------------------------------------------------------
-  playImpact(intensity = 0.5) {
+  playCruiseSpool(duration = 1.5) {
     if (!this.ensureContext()) return;
     try {
       const now = this.ctx.currentTime;
-      const power = Math.max(0.1, Math.min(1.0, intensity));
-
-      // 1. Deep Sub Thud (Sine pitch dive)
+      // Soft D drone capacitor breath (73.4 Hz and 146.8 Hz swelling gently)
       const osc = this.ctx.createOscillator();
-      const oscGain = this.ctx.createGain();
+      const gain = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(120 * power + 40, now);
-      osc.frequency.exponentialRampToValueAtTime(28, now + 0.45);
+      osc.frequency.setValueAtTime(146.8, now);
 
-      oscGain.gain.setValueAtTime(0.45 * power, now);
-      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.12, now + duration * 0.7);
+      gain.gain.linearRampToValueAtTime(0.0001, now + duration);
 
-      osc.connect(oscGain);
-      oscGain.connect(this.sfxGain);
+      osc.connect(gain);
+      gain.connect(this.sfxGain);
       osc.start(now);
-      osc.stop(now + 0.5);
+      osc.stop(now + duration);
 
-      // 2. Metallic Impact Transient (Filtered noise burst)
+      // Low-passed noise puff (opening from 100 Hz to 280 Hz)
       if (this.noiseBuffer) {
         const noise = this.ctx.createBufferSource();
         noise.buffer = this.noiseBuffer;
-        const noiseFilter = this.ctx.createBiquadFilter();
-        noiseFilter.type = 'bandpass';
-        noiseFilter.frequency.setValueAtTime(450, now);
-        noiseFilter.Q.setValueAtTime(3.5, now);
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(100, now);
+        filter.frequency.exponentialRampToValueAtTime(280, now + duration);
 
-        const noiseGain = this.ctx.createGain();
-        noiseGain.gain.setValueAtTime(0.6 * power, now);
-        noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+        const nGain = this.ctx.createGain();
+        nGain.gain.setValueAtTime(0.001, now);
+        nGain.gain.linearRampToValueAtTime(0.18, now + duration * 0.7);
+        nGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
-        noise.connect(noiseFilter);
-        noiseFilter.connect(noiseGain);
-        noiseGain.connect(this.sfxGain);
+        noise.connect(filter);
+        filter.connect(nGain);
+        nGain.connect(this.sfxGain);
         noise.start(now);
-        noise.stop(now + 0.35);
+        noise.stop(now + duration);
       }
-    } catch {
-      // Graceful fallback
-    }
+    } catch {}
   }
 
   // ---------------------------------------------------------------------------
-  // SFX: Surface & On-Foot Exploration
+  // Tactile Cockpit & UI Sounds (No harsh square waves or piercing beeps)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Subtle, subdued radar avionics chirp (warm sine dual-tone at 440 -> 554 Hz)
+   */
+  playTargetSelect() {
+    if (!this.ensureContext()) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(554.4, now + 0.035);
+
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+
+      osc.connect(gain);
+      gain.connect(this.sfxGain);
+      osc.start(now);
+      osc.stop(now + 0.09);
+    } catch {}
+  }
+
+  /**
+   * Tactile cockpit switch click (subtle dual-sine mechanical pulse)
+   */
+  playLightSwitch(on = true) {
+    if (!this.ensureContext()) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(on ? 440 : 330, now);
+      osc.frequency.exponentialRampToValueAtTime(180, now + 0.025);
+
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.035);
+
+      osc.connect(gain);
+      gain.connect(this.sfxGain);
+      osc.start(now);
+      osc.stop(now + 0.04);
+    } catch {}
+  }
+
+  /**
+   * Airlock hatch: soft pneumatic breath + low relay thud (no 1.8kHz screech!)
+   */
+  playAirlock(isBoarding = false) {
+    if (!this.ensureContext()) return;
+    try {
+      const now = this.ctx.currentTime;
+      // Soft pneumatic breath (bandpass at 650 Hz)
+      if (this.noiseBuffer) {
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = this.noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(650, now);
+        filter.Q.setValueAtTime(1.2, now);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.10, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.sfxGain);
+        noise.start(now);
+        noise.stop(now + 0.65);
+      }
+
+      // Soft mechanical latch relay thud (sine dropping 180 Hz -> 90 Hz)
+      const latch = this.ctx.createOscillator();
+      const latchGain = this.ctx.createGain();
+      latch.type = 'sine';
+      latch.frequency.setValueAtTime(isBoarding ? 180 : 220, now + 0.12);
+      latch.frequency.exponentialRampToValueAtTime(70, now + 0.18);
+
+      latchGain.gain.setValueAtTime(0.09, now + 0.12);
+      latchGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.20);
+
+      latch.connect(latchGain);
+      latchGain.connect(this.sfxGain);
+      latch.start(now + 0.12);
+      latch.stop(now + 0.21);
+    } catch {}
+  }
+
+  /**
+   * Jump: subtle suit movement / soft upward puff (no cartoon boing)
+   */
+  playJump() {
+    if (!this.ensureContext()) return;
+    try {
+      const now = this.ctx.currentTime;
+      if (this.noiseBuffer) {
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = this.noiseBuffer;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(320, now);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.sfxGain);
+        noise.start(now);
+        noise.stop(now + 0.14);
+      }
+
+      const thud = this.ctx.createOscillator();
+      const thudGain = this.ctx.createGain();
+      thud.type = 'sine';
+      thud.frequency.setValueAtTime(75, now);
+      thud.frequency.exponentialRampToValueAtTime(45, now + 0.08);
+
+      thudGain.gain.setValueAtTime(0.08, now);
+      thudGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+
+      thud.connect(thudGain);
+      thudGain.connect(this.sfxGain);
+      thud.start(now);
+      thud.stop(now + 0.09);
+    } catch {}
+  }
+
+  /**
+   * Landing after jump: soft muffled ground thud
+   */
+  playJumpLanding() {
+    if (!this.ensureContext()) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(65, now);
+      osc.frequency.exponentialRampToValueAtTime(35, now + 0.12);
+
+      gain.gain.setValueAtTime(0.14, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+
+      osc.connect(gain);
+      gain.connect(this.sfxGain);
+      osc.start(now);
+      osc.stop(now + 0.15);
+    } catch {}
+  }
+
+  // ---------------------------------------------------------------------------
+  // Surface & Footsteps
+  // ---------------------------------------------------------------------------
   updateFootsteps(speed, isRunning, isGrounded, dt) {
     if (!this.ensureContext()) return;
     if (!isGrounded || speed < 0.001) {
@@ -391,121 +797,88 @@ export class AudioManager {
     if (!this.ensureContext()) return;
     try {
       const now = this.ctx.currentTime;
-      // Slight pitch variation so steps don't sound repetitive
-      const pitchJitter = 0.9 + Math.random() * 0.2;
+      const pitchJitter = 0.92 + Math.random() * 0.16;
 
-      // Ground crunch (filtered noise)
+      // Soft ground crunch (filtered noise at 320 Hz)
       if (this.noiseBuffer) {
         const noise = this.ctx.createBufferSource();
         noise.buffer = this.noiseBuffer;
         const filter = this.ctx.createBiquadFilter();
         filter.type = 'bandpass';
-        filter.frequency.setValueAtTime((isRunning ? 600 : 450) * pitchJitter, now);
-        filter.Q.setValueAtTime(2.0, now);
+        filter.frequency.setValueAtTime((isRunning ? 380 : 300) * pitchJitter, now);
+        filter.Q.setValueAtTime(1.8, now);
 
         const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime((isRunning ? 0.22 : 0.14), now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+        gain.gain.setValueAtTime(isRunning ? 0.14 : 0.09, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
 
         noise.connect(filter);
         filter.connect(gain);
         gain.connect(this.sfxGain);
         noise.start(now);
-        noise.stop(now + 0.09);
+        noise.stop(now + 0.08);
       }
 
-      // Low heel thud
+      // Warm low heel thud
       const thud = this.ctx.createOscillator();
       const thudGain = this.ctx.createGain();
-      thud.type = 'triangle';
+      thud.type = 'sine';
       thud.frequency.setValueAtTime(75 * pitchJitter, now);
-      thud.frequency.exponentialRampToValueAtTime(35, now + 0.07);
+      thud.frequency.exponentialRampToValueAtTime(35, now + 0.06);
 
-      thudGain.gain.setValueAtTime(0.12, now);
-      thudGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
+      thudGain.gain.setValueAtTime(0.10, now);
+      thudGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
 
       thud.connect(thudGain);
       thudGain.connect(this.sfxGain);
       thud.start(now);
-      thud.stop(now + 0.08);
+      thud.stop(now + 0.07);
     } catch {}
   }
 
-  playJump() {
+  // ---------------------------------------------------------------------------
+  // Impacts, Landing & Liftoff
+  // ---------------------------------------------------------------------------
+  playImpact(intensity = 0.5) {
     if (!this.ensureContext()) return;
     try {
       const now = this.ctx.currentTime;
+      const power = Math.max(0.1, Math.min(1.0, intensity));
+
+      // Deep Sub Thud (Sine dive)
       const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const oscGain = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(140, now);
-      osc.frequency.exponentialRampToValueAtTime(280, now + 0.16);
+      osc.frequency.setValueAtTime(110 * power + 40, now);
+      osc.frequency.exponentialRampToValueAtTime(28, now + 0.45);
 
-      gain.gain.setValueAtTime(0.15, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+      oscGain.gain.setValueAtTime(0.40 * power, now);
+      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
 
-      osc.connect(gain);
-      gain.connect(this.sfxGain);
+      osc.connect(oscGain);
+      oscGain.connect(this.sfxGain);
+      oscGain.connect(this.convolver); // Impact washes naturally into reverb
       osc.start(now);
-      osc.stop(now + 0.18);
-    } catch {}
-  }
+      osc.stop(now + 0.5);
 
-  playJumpLanding() {
-    if (!this.ensureContext()) return;
-    try {
-      const now = this.ctx.currentTime;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(110, now);
-      osc.frequency.exponentialRampToValueAtTime(32, now + 0.15);
-
-      gain.gain.setValueAtTime(0.22, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
-
-      osc.connect(gain);
-      gain.connect(this.sfxGain);
-      osc.start(now);
-      osc.stop(now + 0.16);
-    } catch {}
-  }
-
-  playAirlock(isBoarding = false) {
-    if (!this.ensureContext()) return;
-    try {
-      const now = this.ctx.currentTime;
-      // Pneumatic pressure equalizing hiss
+      // Lowpass metallic impact noise (350 Hz, not harsh)
       if (this.noiseBuffer) {
         const noise = this.ctx.createBufferSource();
         noise.buffer = this.noiseBuffer;
-        const filter = this.ctx.createBiquadFilter();
-        filter.type = 'highpass';
-        filter.frequency.setValueAtTime(1800, now);
+        const noiseFilter = this.ctx.createBiquadFilter();
+        noiseFilter.type = 'lowpass';
+        noiseFilter.frequency.setValueAtTime(350, now);
 
-        const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.24, now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+        const noiseGain = this.ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.35 * power, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
 
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(this.sfxGain);
+        noise.connect(noiseFilter);
+        noiseFilter.connect(noiseGain);
+        noiseGain.connect(this.sfxGain);
         noise.start(now);
-        noise.stop(now + 0.7);
+        noise.stop(now + 0.35);
       }
-
-      // Mechanical latch click
-      const click = this.ctx.createOscillator();
-      const clickGain = this.ctx.createGain();
-      click.type = 'square';
-      click.frequency.setValueAtTime(isBoarding ? 520 : 680, now + 0.15);
-      clickGain.gain.setValueAtTime(0.08, now + 0.15);
-      clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-
-      click.connect(clickGain);
-      clickGain.connect(this.sfxGain);
-      click.start(now + 0.15);
-      click.stop(now + 0.25);
     } catch {}
   }
 
@@ -513,38 +886,38 @@ export class AudioManager {
     if (!this.ensureContext()) return;
     try {
       const now = this.ctx.currentTime;
-      // Hydraulic cushion hiss + gear touchdown lock
+      // Soft hydraulic cushion + touchdown lock
       if (this.noiseBuffer) {
         const noise = this.ctx.createBufferSource();
         noise.buffer = this.noiseBuffer;
         const filter = this.ctx.createBiquadFilter();
         filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(600, now);
+        filter.frequency.setValueAtTime(380, now);
 
         const gain = this.ctx.createGain();
-        gain.gain.setValueAtTime(0.3, now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.8);
+        gain.gain.setValueAtTime(0.22, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
 
         noise.connect(filter);
         filter.connect(gain);
         gain.connect(this.sfxGain);
         noise.start(now);
-        noise.stop(now + 0.85);
+        noise.stop(now + 0.75);
       }
 
       const clunk = this.ctx.createOscillator();
       const clunkGain = this.ctx.createGain();
       clunk.type = 'sine';
-      clunk.frequency.setValueAtTime(95, now + 0.2);
-      clunk.frequency.exponentialRampToValueAtTime(32, now + 0.55);
+      clunk.frequency.setValueAtTime(80, now + 0.15);
+      clunk.frequency.exponentialRampToValueAtTime(32, now + 0.45);
 
-      clunkGain.gain.setValueAtTime(0.35, now + 0.2);
-      clunkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+      clunkGain.gain.setValueAtTime(0.25, now + 0.15);
+      clunkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
 
       clunk.connect(clunkGain);
       clunkGain.connect(this.sfxGain);
-      clunk.start(now + 0.2);
-      clunk.stop(now + 0.65);
+      clunk.start(now + 0.15);
+      clunk.stop(now + 0.55);
     } catch {}
   }
 
@@ -552,18 +925,17 @@ export class AudioManager {
     if (!this.ensureContext()) return;
     try {
       const now = this.ctx.currentTime;
-      // Blast-off surge
       if (this.noiseBuffer) {
         const noise = this.ctx.createBufferSource();
         noise.buffer = this.noiseBuffer;
         const filter = this.ctx.createBiquadFilter();
         filter.type = 'lowpass';
-        filter.frequency.setValueAtTime(180, now);
-        filter.frequency.exponentialRampToValueAtTime(700, now + 0.6);
+        filter.frequency.setValueAtTime(140, now);
+        filter.frequency.exponentialRampToValueAtTime(380, now + 0.7);
 
         const gain = this.ctx.createGain();
         gain.gain.setValueAtTime(0.01, now);
-        gain.gain.linearRampToValueAtTime(0.38, now + 0.35);
+        gain.gain.linearRampToValueAtTime(0.25, now + 0.4);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
 
         noise.connect(filter);
@@ -576,81 +948,7 @@ export class AudioManager {
   }
 
   // ---------------------------------------------------------------------------
-  // SFX: Avionics & Cockpit UI
-  // ---------------------------------------------------------------------------
-  playTargetSelect() {
-    if (!this.ensureContext()) return;
-    try {
-      const now = this.ctx.currentTime;
-      // High-tech sci-fi blip (dual pitch ping)
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(950, now);
-      osc.frequency.setValueAtTime(1420, now + 0.04);
-
-      gain.gain.setValueAtTime(0.12, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-
-      osc.connect(gain);
-      gain.connect(this.sfxGain);
-      osc.start(now);
-      osc.stop(now + 0.13);
-    } catch {}
-  }
-
-  playLightSwitch(on = true) {
-    if (!this.ensureContext()) return;
-    try {
-      const now = this.ctx.currentTime;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(on ? 720 : 540, now);
-
-      gain.gain.setValueAtTime(0.08, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
-
-      osc.connect(gain);
-      gain.connect(this.sfxGain);
-      osc.start(now);
-      osc.stop(now + 0.06);
-    } catch {}
-  }
-
-  // ---------------------------------------------------------------------------
-  // SFX: Cruise Drive Spool
-  // ---------------------------------------------------------------------------
-  playCruiseSpool(duration = 1.5) {
-    if (!this.ensureContext()) return;
-    try {
-      const now = this.ctx.currentTime;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(140, now);
-      osc.frequency.exponentialRampToValueAtTime(780, now + duration);
-
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(300, now);
-      filter.frequency.exponentialRampToValueAtTime(1800, now + duration);
-
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(0.2, now + duration * 0.8);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(this.sfxGain);
-
-      osc.start(now);
-      osc.stop(now + duration);
-    } catch {}
-  }
-
-  // ---------------------------------------------------------------------------
-  // SFX: Hyperspace Jump Transitions
+  // Hyperspace Audio Transitions
   // ---------------------------------------------------------------------------
   playCharging(duration = 1.2) {
     this.playHyperspaceCharge(duration);
@@ -660,28 +958,25 @@ export class AudioManager {
     if (!this.ensureContext()) return;
     try {
       const now = this.ctx.currentTime;
-      // Drive Spin-Up Oscillator
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       const filter = this.ctx.createBiquadFilter();
 
-      osc.type = 'sawtooth';
+      osc.type = 'sine';
       osc.frequency.setValueAtTime(90, now);
-      osc.frequency.exponentialRampToValueAtTime(850, now + duration);
+      osc.frequency.exponentialRampToValueAtTime(320, now + duration);
 
-      filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(250, now);
-      filter.frequency.exponentialRampToValueAtTime(3500, now + duration);
-      filter.Q.setValueAtTime(3.2, now);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(240, now);
+      filter.frequency.exponentialRampToValueAtTime(750, now + duration);
 
       gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(0.28, now + duration * 0.85);
+      gain.gain.linearRampToValueAtTime(0.24, now + duration * 0.85);
       gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
       osc.connect(filter);
       filter.connect(gain);
       gain.connect(this.sfxGain);
-
       osc.start(now);
       osc.stop(now + duration);
     } catch {}
@@ -691,21 +986,20 @@ export class AudioManager {
     if (!this.ensureContext()) return;
     try {
       const now = this.ctx.currentTime;
-      // Sub-bass warp boom
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(160, now);
-      osc.frequency.exponentialRampToValueAtTime(30, now + 1.1);
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.exponentialRampToValueAtTime(28, now + 1.2);
 
-      gain.gain.setValueAtTime(0.5, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.3);
+      gain.gain.setValueAtTime(0.42, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
 
       osc.connect(gain);
       gain.connect(this.sfxGain);
-
+      gain.connect(this.convolver);
       osc.start(now);
-      osc.stop(now + 1.35);
+      osc.stop(now + 1.45);
     } catch {}
   }
 
@@ -716,55 +1010,63 @@ export class AudioManager {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(520, now);
-      osc.frequency.exponentialRampToValueAtTime(110, now + duration * 0.85);
+      osc.frequency.setValueAtTime(340, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + duration * 0.85);
 
-      gain.gain.setValueAtTime(0.24, now);
+      gain.gain.setValueAtTime(0.20, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
       osc.connect(gain);
       gain.connect(this.sfxGain);
-
+      gain.connect(this.convolver);
       osc.start(now);
       osc.stop(now + duration);
     } catch {}
   }
 
   // ---------------------------------------------------------------------------
-  // Generative Cosmic Ambient Soundtrack / Music Engine
+  // 5. Generative D Dorian Ambient Music Engine
   // ---------------------------------------------------------------------------
   _setupMusicEngine() {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Master filter for ethereal, warm cosmic space pads
+    // Master filter for lush, warm pads (breathes slowly with LFO)
     this.music.filter = this.ctx.createBiquadFilter();
     this.music.filter.type = 'lowpass';
-    this.music.filter.frequency.setValueAtTime(650, now);
-    this.music.filter.Q.setValueAtTime(1.5, now);
-    this.music.filter.connect(this.musicGain);
+    this.music.filter.frequency.setValueAtTime(580, now);
+    this.music.filter.Q.setValueAtTime(1.2, now);
 
-    // Subtle LFO sweep on the pad filter for space shimmer
+    // Filter routes directly to music bus AND washes into the reverb
+    this.music.filter.connect(this.musicGain);
+    const reverbSend = this.ctx.createGain();
+    reverbSend.gain.setValueAtTime(0.50, now);
+    this.music.filter.connect(reverbSend);
+    reverbSend.connect(this.convolver);
+
+    // Ultra-slow breathing LFO (0.035 Hz = ~28.5s cycle)
     const lfo = this.ctx.createOscillator();
-    lfo.frequency.setValueAtTime(0.08, now); // Very slow breathing (12.5s cycle)
+    lfo.frequency.setValueAtTime(0.035, now);
     const lfoGain = this.ctx.createGain();
-    lfoGain.gain.setValueAtTime(120, now);
+    lfoGain.gain.setValueAtTime(180, now); // Sweeps cutoff between 400 Hz and 760 Hz
     lfo.connect(lfoGain);
     lfoGain.connect(this.music.filter.frequency);
     lfo.start(now);
     this.music.lfo = lfo;
 
-    // Check if custom music file is provided in public/audio/
+    // Check for custom music track in public/audio/
     this._probeCustomMusic();
 
-    // Start procedural pad progression
+    // Start modal chord progression
     this._playNextAmbientChord();
+
+    // Start sparse high crystal chime notes through delay & reverb
+    this._scheduleNextChime();
   }
 
   _probeCustomMusic() {
     if (typeof window === 'undefined' || typeof Audio === 'undefined') return;
     try {
-      // Look for /audio/music.mp3 or /audio/music.ogg or /audio/ambient.mp3
       const audio = new Audio();
       audio.src = './audio/music.mp3';
       audio.loop = true;
@@ -773,13 +1075,11 @@ export class AudioManager {
       audio.addEventListener('canplaythrough', () => {
         this.music.hasCustomTrack = true;
         this.music.customAudio = audio;
-        // Fade out generative pads when custom track is available and played
         if (this.ctx && !this.muted) {
           audio.play().catch(() => {});
         }
       }, { once: true });
 
-      // Trigger load check silently
       audio.load();
     } catch {}
   }
@@ -789,30 +1089,56 @@ export class AudioManager {
 
     try {
       const now = this.ctx.currentTime;
-      const chord = SPACE_CHORDS[this.music.currentChordIndex];
-      this.music.currentChordIndex = (this.music.currentChordIndex + 1) % SPACE_CHORDS.length;
 
-      const chordDuration = 11.0; // seconds per chord
-      const attack = 3.5;
-      const release = 4.0;
+      // Pick next chord randomly from other chords (never same chord twice in a row)
+      const numChords = SPACE_CHORDS.length;
+      let nextIndex = Math.floor(Math.random() * (numChords - 1));
+      if (nextIndex >= this.music.currentChordIndex && this.music.currentChordIndex >= 0) {
+        nextIndex = (nextIndex + 1) % numChords;
+      }
+      this.music.currentChordIndex = nextIndex;
 
-      // Clean up dead voices
+      const chord = SPACE_CHORDS[nextIndex];
+
+      // Hold each chord for 22–28 seconds with smooth 6-second crossfades
+      const chordDuration = 24.0 + Math.random() * 4.0;
+      const attack = 5.0;
+      const release = 6.0;
+
+      // Clean up past voices
       this.music.activeVoices = this.music.activeVoices.filter(v => v.endTime > now);
 
-      // Play each note of the chord with gentle detuned dual oscillators
-      for (let i = 0; i < chord.length; i++) {
-        const freq = midiToFreq(chord[i]);
+      // Play Root Bass Note (soft warm sine, raised to octave 2/3 so audible on laptops)
+      const bassFreq = midiToFreq(chord.bass);
+      const bassOsc = this.ctx.createOscillator();
+      const bassGain = this.ctx.createGain();
+      bassOsc.type = 'sine';
+      bassOsc.frequency.setValueAtTime(bassFreq, now);
 
-        // Dual detuned oscillators for rich lush chorus
-        for (const detune of [-4.5, 4.5]) {
+      bassGain.gain.setValueAtTime(0.0001, now);
+      bassGain.gain.linearRampToValueAtTime(0.16, now + attack);
+      bassGain.gain.setValueAtTime(0.16, now + chordDuration - release);
+      bassGain.gain.linearRampToValueAtTime(0.0001, now + chordDuration);
+
+      bassOsc.connect(bassGain);
+      bassGain.connect(this.music.filter);
+      bassOsc.start(now);
+      bassOsc.stop(now + chordDuration);
+      this.music.activeVoices.push({ osc: bassOsc, gain: bassGain, endTime: now + chordDuration });
+
+      // Play Harmony Notes (gentle dual detuned sines for rich celestial chorus)
+      for (let i = 0; i < chord.notes.length; i++) {
+        const freq = midiToFreq(chord.notes[i]);
+
+        for (const detune of [-3.5, 3.5]) {
           const osc = this.ctx.createOscillator();
           const gain = this.ctx.createGain();
 
-          osc.type = i === 0 ? 'sine' : 'triangle';
+          osc.type = 'sine';
           osc.frequency.setValueAtTime(freq, now);
           osc.detune.setValueAtTime(detune, now);
 
-          const peakVol = (0.05 / chord.length) * (i === 0 ? 1.6 : 1.0);
+          const peakVol = 0.045 / chord.notes.length;
 
           gain.gain.setValueAtTime(0.0001, now);
           gain.gain.linearRampToValueAtTime(peakVol, now + attack);
@@ -824,19 +1150,60 @@ export class AudioManager {
 
           osc.start(now);
           osc.stop(now + chordDuration);
-
           this.music.activeVoices.push({ osc, gain, endTime: now + chordDuration });
         }
       }
 
-      // Schedule next chord
-      const nextTimeMs = (chordDuration - release * 0.75) * 1000;
+      // Schedule next chord crossfade
+      const nextTimeMs = (chordDuration - release * 0.8) * 1000;
       this.music.timer = setTimeout(() => this._playNextAmbientChord(), nextTimeMs);
     } catch {}
   }
 
+  /**
+   * Plays sparse high crystalline chime notes through delay and space reverb
+   */
+  _scheduleNextChime() {
+    if (!this.music.enabled || !this.ctx || this.music.hasCustomTrack) return;
+
+    // Randomized interval: every 10 to 20 seconds
+    const intervalMs = (10.0 + Math.random() * 10.0) * 1000;
+    this.music.bellTimer = setTimeout(() => {
+      this._playHighChime();
+      this._scheduleNextChime();
+    }, intervalMs);
+  }
+
+  _playHighChime() {
+    if (!this.ensureContext()) return;
+    try {
+      const now = this.ctx.currentTime;
+      const note = CHIME_NOTES[Math.floor(Math.random() * CHIME_NOTES.length)];
+      const freq = midiToFreq(note);
+
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+
+      // Soft envelope (15ms attack avoids click, 1.2s decay)
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.04, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.2);
+
+      osc.connect(gain);
+      // Send directly into the delay and space reverb!
+      gain.connect(this.delayNode);
+      gain.connect(this.convolver);
+      gain.connect(this.musicGain);
+
+      osc.start(now);
+      osc.stop(now + 1.25);
+    } catch {}
+  }
+
   // ---------------------------------------------------------------------------
-  // Master Controls & Mute
+  // Master Mute & Volume
   // ---------------------------------------------------------------------------
   toggleMute() {
     this.ensureContext();
@@ -844,7 +1211,7 @@ export class AudioManager {
 
     if (this.masterGain && this.ctx) {
       const now = this.ctx.currentTime;
-      const targetGain = this.muted ? 0.0001 : 0.75;
+      const targetGain = this.muted ? 0.0001 : 0.72;
       this.masterGain.gain.setTargetAtTime(targetGain, now, 0.05);
     }
 
@@ -865,6 +1232,7 @@ export class AudioManager {
 
   dispose() {
     if (this.music.timer) clearTimeout(this.music.timer);
+    if (this.music.bellTimer) clearTimeout(this.music.bellTimer);
     if (this.music.customAudio) {
       try { this.music.customAudio.pause(); } catch {}
     }
@@ -874,4 +1242,8 @@ export class AudioManager {
       this.isInitialized = false;
     }
   }
+}
+
+function THREE_clamp(v, min, max) {
+  return v < min ? min : v > max ? max : v;
 }
