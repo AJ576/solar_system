@@ -1,4 +1,4 @@
-# Procedural Solar System Exploration Prototype
+# Galactic Cruise
 
 An interactive, playable 3D space exploration prototype built with Three.js and Vite. Explore infinitely many procedurally generated solar systems, pilot a 6DOF starfighter with Newtonian-inspired flight physics, observe Keplerian planetary orbital motion, and engage hyperspace jump drives to transition seamlessly between distant star systems.
 
@@ -59,6 +59,10 @@ An interactive, playable 3D space exploration prototype built with Three.js and 
   - 4-phase transition: `IDLE` -> `CHARGING` (1.2s) -> `WARPING` (1.8s) -> `ARRIVING` (1.0s).
   - Warp streaks, flash overlay, camera shake and synthesized Web Audio effects.
   - The new system is swapped in behind the flash and the ship arrives next to one of its inner planets.
+
+- **Presentation**:
+  - "Galactic Cruise" loading screen while the first system is generated, then the controls screen on start.
+  - Procedural star skybox drawn in a shader: three layers of colour-tinted stars, a Milky Way band with dust lanes, and faint nebulae.
 
 - **HUD**:
   - Restrained instrument-style overlay (Inter, tabular numerals, one amber accent for the target).

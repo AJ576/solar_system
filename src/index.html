@@ -3,13 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Procedural Solar System Exploration</title>
+    <title>Galactic Cruise</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <div class="loader" id="loader" role="status" aria-live="polite">
+      <div class="loader__title">Galactic Cruise</div>
+      <div class="loader__ring" aria-hidden="true"></div>
+      <div class="loader__status" id="loader-status">Charting the stars…</div>
+    </div>
     <canvas class="threejs"></canvas>
     <div id="hud-container"></div>
     <script type="module" src="script.js"></script>

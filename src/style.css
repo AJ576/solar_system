@@ -943,3 +943,65 @@ canvas.threejs {
     max-height: calc(100vh - 64px - 250px);
   }
 }
+
+/* ==========================================================================
+   Loader
+   ========================================================================== */
+
+.loader {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  background: radial-gradient(ellipse at 50% 45%, #0d1424 0%, #04060b 70%);
+  color: rgba(238, 240, 244, 0.94);
+  font-family: 'Inter', system-ui, sans-serif;
+  transition: opacity 0.6s ease;
+}
+
+.loader.is-done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loader__title {
+  font-size: clamp(28px, 6vw, 52px);
+  font-weight: 300;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  padding-left: 0.32em;
+  text-align: center;
+}
+
+.loader__ring {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(238, 240, 244, 0.12);
+  border-top-color: #e8b872;
+  animation: loader-spin 1s linear infinite;
+}
+
+.loader__status {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: rgba(238, 240, 244, 0.55);
+}
+
+@keyframes loader-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loader__ring { animation-duration: 3s; }
+}
+
+.hud-help__foot {
+  margin-top: 18px;
+  font-size: 12px;
+  color: var(--fg-3);
+}

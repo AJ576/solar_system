@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createDiffractionStarTexture } from './proceduralTextures.js';
+import { createSkybox } from './skybox.js';
 
 /**
  * Creates a circular soft-glow texture for star points.
@@ -306,6 +307,10 @@ export function createEnvironment(scene) {
     scene.add(envGroup);
   }
 
+  // Procedural star skybox (Milky Way, nebulae, deep star field) behind everything
+  const skybox = createSkybox(7);
+  if (scene) scene.add(skybox.mesh);
+
   // -------------------------------------------------------------
   // 5. Cinematic Space Ambient Light (Calibrated High Contrast)
   // -------------------------------------------------------------
@@ -330,6 +335,7 @@ export function createEnvironment(scene) {
     update(cameraPosition, delta = 0.016) {
       if (cameraPosition && envGroup) {
         envGroup.position.copy(cameraPosition);
+        skybox.update(cameraPosition);
       }
       if (bgStarfield) {
         bgStarfield.rotation.y += 0.000015 * (delta / 0.016);
@@ -339,6 +345,7 @@ export function createEnvironment(scene) {
     dispose() {
       if (scene) {
         if (envGroup) scene.remove(envGroup);
+        scene.remove(skybox.mesh);
         if (ambientLight) scene.remove(ambientLight);
       }
 
@@ -351,6 +358,7 @@ export function createEnvironment(scene) {
       if (dustGeometry) dustGeometry.dispose();
       if (dustMaterial) dustMaterial.dispose();
 
+      skybox.dispose();
       if (starTexture) starTexture.dispose();
       if (diffractionTexture) diffractionTexture.dispose();
       if (nebulaTexture) nebulaTexture.dispose();

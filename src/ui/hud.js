@@ -263,10 +263,11 @@ const TEMPLATE = `
   <div class="hud-help" data-ref="help">
     <div class="hud-help__card" role="dialog" aria-label="Controls">
       <div class="hud-help__head">
-        <span class="hud-help__title">Controls</span>
+        <span class="hud-help__title">Galactic Cruise — Controls</span>
         <button class="hud-btn" data-ref="btnHelpClose">Close <kbd>Esc</kbd></button>
       </div>
       ${helpHtml()}
+      <div class="hud-help__foot">Press <kbd>F1</kbd> or <kbd>?</kbd> to open this again. Close it and click the view to start flying.</div>
     </div>
   </div>
 `;
@@ -512,6 +513,11 @@ export class HUD {
     }
     el.classList.toggle('is-on', !!text);
     el.classList.toggle('is-warn', !!warn);
+  }
+
+  /** Opens the controls overlay (shown on first start). */
+  showHelp() {
+    this._setHelp(true);
   }
 
   /** flight | landing | landed | foot — on foot the flight instruments are hidden. */
