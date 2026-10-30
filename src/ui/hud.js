@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { KM_PER_UNIT } from '../utils/scale.js';
 
 /**
  * HUD — restrained instrument-style overlay.
@@ -15,9 +16,11 @@ import * as THREE from 'three';
 const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 const nf1 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-function fmtDistance(d) {
-  if (d == null || !Number.isFinite(d)) return '—';
+function fmtDistance(units) {
+  if (units == null || !Number.isFinite(units)) return '—';
+  const d = units * KM_PER_UNIT;
   const a = Math.abs(d);
+  if (a < 1) return `${nf0.format(d * 1000)} m`;
   if (a >= 1e9) return `${(d / 1e9).toFixed(2)}B km`;
   if (a >= 1e6) return `${(d / 1e6).toFixed(2)}M km`;
   if (a < 10) return `${nf1.format(d)} km`;
@@ -27,8 +30,9 @@ function fmtDistance(d) {
   return `${nf0.format(Math.round(d / step) * step)} km`;
 }
 
-function fmtSpeedNumber(s) {
-  if (s == null || !Number.isFinite(s)) return '0';
+function fmtSpeedNumber(units) {
+  if (units == null || !Number.isFinite(units)) return '0';
+  const s = units * KM_PER_UNIT;
   const a = Math.abs(s);
   if (a < 10) return nf1.format(s);
   return nf0.format(s);
@@ -98,6 +102,18 @@ const HELP_GROUPS = [
       [['Space'], 'Boost'],
       [['Shift'], 'Brake'],
       [['C'], 'Toggle cruise drive — fast travel, slows automatically near bodies'],
+    ],
+  },
+  {
+    title: 'Surface',
+    rows: [
+      [['G'], 'Land — within 300 m of the ground and below 500 m/s'],
+      [['W'], 'Take off when landed'],
+      [['F'], 'Step out of the ship / board it again'],
+      [['W', 'A', 'S', 'D'], 'Walk'],
+      [['Shift'], 'Run'],
+      [['Space'], 'Jump / swim up'],
+      [['N'], 'Lights: auto (headlight and lantern come on at night) / off'],
     ],
   },
   {
@@ -239,6 +255,8 @@ const TEMPLATE = `
     </div>
     <div class="hud-list__body" data-ref="listBody"></div>
   </div>
+
+  <div class="hud-prompt" data-ref="prompt"></div>
 
   <div class="hud-hint" data-ref="hint">Click to steer with mouse</div>
 
@@ -472,6 +490,36 @@ export class HUD {
     this._cls('hint', 'is-on', t.pointerLocked === false && !this._helpOpen && !inJump);
     this._updateMarkers(t, targeting, camera, W, H, inJump);
     this._updateImpact();
+  }
+
+  /**
+   * Short action prompt above the altitude readout (e.g. "G  Land"); null hides it.
+   */
+  setPrompt(text, warn = false) {
+    const key = `${text}|${warn}`;
+    if (this._promptKey === key) return;
+    this._promptKey = key;
+    const el = this.el.prompt;
+    el.textContent = '';
+    if (text) {
+      // "G  Land    W  Take off" → key caps followed by labels
+      const parts = text.split(/\s{2,}/);
+      for (let i = 0; i < parts.length; i++) {
+        const span = document.createElement(i % 2 === 0 && parts[i].length <= 2 ? 'kbd' : 'span');
+        span.textContent = parts[i];
+        el.appendChild(span);
+      }
+    }
+    el.classList.toggle('is-on', !!text);
+    el.classList.toggle('is-warn', !!warn);
+  }
+
+  /** flight | landing | landed | foot — on foot the flight instruments are hidden. */
+  setMode(mode) {
+    if (this._mode === mode) return;
+    this._mode = mode;
+    this.root.classList.toggle('is-foot', mode === 'foot');
+    this.root.classList.toggle('is-landed', mode === 'landed' || mode === 'landing');
   }
 
   setTargetList(list) {

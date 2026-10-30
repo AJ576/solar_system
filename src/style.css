@@ -684,6 +684,39 @@ canvas.threejs {
   color: var(--warn);
 }
 
+.hud-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 54px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--fade);
+}
+
+.hud-prompt.is-on {
+  opacity: 1;
+}
+
+.hud-prompt span + kbd {
+  margin-left: 14px;
+}
+
+.hud-prompt.is-warn {
+  color: var(--warn);
+}
+
+/* On foot: no flight instruments or flight-path marker */
+.hud.is-foot .hud-flight,
+.hud.is-foot .hud-fpm {
+  display: none;
+}
+
 .hud-hint {
   position: absolute;
   left: 50%;

@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import { SHIP_SCALE } from '../utils/scale.js';
+
+// Point lights fall off with distance², so shrinking the ship needs S² less intensity
+const LIGHT_INTENSITY_SCALE = SHIP_SCALE * SHIP_SCALE;
 
 /**
  * Procedural 3D composite spaceship using Three.js primitives.
@@ -14,8 +18,9 @@ import * as THREE from 'three';
 export function createSpaceship() {
   const shipGroup = new THREE.Group();
   shipGroup.name = 'Spaceship';
-  // 5-Tier Scale Hierarchy: 0.5x master scale establishes crisp 2.44u x 2.72u heavy interceptor footprint
-  shipGroup.scale.set(0.5, 0.5, 0.5);
+  // Modelled as a 2.44u x 2.72u interceptor at 0.5x; SHIP_SCALE brings it to world scale
+  const masterScale = 0.5 * SHIP_SCALE;
+  shipGroup.scale.set(masterScale, masterScale, masterScale);
 
   // --- Materials ---
   const hullDarkMat = new THREE.MeshStandardMaterial({
@@ -290,7 +295,7 @@ export function createSpaceship() {
   navLeftMesh.position.set(-2.62, 0.24, 0.88);
   shipGroup.add(navLeftMesh);
 
-  const navLeftLight = new THREE.PointLight(0xff1744, 0.12, 1.2);
+  const navLeftLight = new THREE.PointLight(0xff1744, 0.12 * LIGHT_INTENSITY_SCALE, 1.2 * SHIP_SCALE);
   navLeftLight.position.set(-2.66, 0.24, 0.88);
   shipGroup.add(navLeftLight);
 
@@ -300,7 +305,7 @@ export function createSpaceship() {
   navRightMesh.position.set(2.62, 0.24, 0.88);
   shipGroup.add(navRightMesh);
 
-  const navRightLight = new THREE.PointLight(0x00e676, 0.12, 1.2);
+  const navRightLight = new THREE.PointLight(0x00e676, 0.12 * LIGHT_INTENSITY_SCALE, 1.2 * SHIP_SCALE);
   navRightLight.position.set(2.66, 0.24, 0.88);
   shipGroup.add(navRightLight);
 
@@ -387,6 +392,19 @@ export function createSpaceship() {
   // Initial thruster state
   const thrusterGlows = [leftFlareOuter, rightFlareOuter];
 
+  // --- Headlight: soft wide spot from the nose, angled slightly down ---
+  const headlight = new THREE.SpotLight(0xfff2dc, 0, 0, 0.75, 0.85, 1);
+  headlight.name = 'ShipHeadlight';
+  headlight.position.set(0, -0.1, -2.4);
+  headlight.target.position.set(0, -1.6, -12);
+  shipGroup.add(headlight);
+  shipGroup.add(headlight.target);
+
+  /** @param {number} level 0 (off) .. 1 (full) */
+  function setHeadlights(level) {
+    headlight.intensity = Math.max(0, level) * 0.35;
+  }
+
   /**
    * Scales flame cones & light intensity based on throttle 0..1 (or >1 when boosting).
    * @param {number} throttle 0 (idle) to 1.0 (cruise), or 2.5 (afterburner boost)
@@ -394,7 +412,16 @@ export function createSpaceship() {
   const _boostOuter = new THREE.Color(0xa9c4ff);
   const _boostInner = new THREE.Color(0xffffff);
 
+  const flares = [leftFlareOuter, rightFlareOuter, leftFlareInner, rightFlareInner];
+
   function setThrusterIntensity(throttle) {
+    // 0 (or less) means the engines are shut down, e.g. after landing
+    const off = !(Number(throttle) > 0);
+    for (const flare of flares) flare.visible = !off;
+    if (off) {
+      thrusterLight.intensity = 0;
+      return;
+    }
     const t = Math.max(0.04, Number(throttle) || 0);
 
     // Dynamic scale along thrust axis (+Z) and girth (X/Y)
@@ -425,8 +452,8 @@ export function createSpaceship() {
     }
 
     thrusterLight.color.setHex(0x8fb4ff);
-    thrusterLight.intensity = 0.6 + t * 1.6;
-    thrusterLight.distance = (10 + t * 6) * 0.5;
+    thrusterLight.intensity = (0.6 + t * 1.6) * LIGHT_INTENSITY_SCALE;
+    thrusterLight.distance = (10 + t * 6) * 0.5 * SHIP_SCALE;
   }
 
   // Set initial idle glow
@@ -437,6 +464,7 @@ export function createSpaceship() {
     thrusterGlows,
     thrusterLight,
     setThrusterIntensity,
+    setHeadlights,
   };
 }
 

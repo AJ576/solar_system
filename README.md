@@ -14,6 +14,31 @@ An interactive, playable 3D space exploration prototype built with Three.js and 
   - Procedural planetary rings and multiple moon satellite systems.
   - Orbital line loops rendering full Keplerian elliptical trajectories in 3D.
 
+- **Procedural Planetary Terrain**:
+  - Continuous 3D Simplex noise evaluated on a cube-sphere, so there are no polar seams or pinching.
+  - Domain-warped continents with a calibrated sea level (each planet floods an exact share of its surface), continental shelves, and ridged mountain ranges that run along sinuous belts.
+  - Hand-tuned variants per planet type, with only small per-seed jitter so every world stays coherent: Ocean (Temperate, Tropical, Savanna, Alien), Desert (Rust, Dune Sea, Badlands), Ice (Glacial, Frozen Highlands, Nitrogen), Rocky (Barren, Volcanic, Iron, Toxic), and Moon (Lunar, Dusty, Icy, Sulfur).
+  - Geological features: impact craters with central peaks, shield volcanoes with calderas, mesas, canyons and ice cracks, dune fields, and flooded maria.
+  - Liquid surfaces: translucent water oceans with polar sea ice, emissive lava seas, and frozen ice sheets.
+  - A temperature model (latitude and altitude) places polar caps and snowy peaks; slopes expose bare rock.
+  - Streaming quadtree terrain: each cube face splits into chunks near the camera, down to ~4 m vertex spacing when you are standing on the ground. Chunks are built in Web Workers, use skirts to hide cracks between detail levels, and stop refining past the horizon.
+  - Fine detail noise octaves are added only where the mesh can resolve them, and the shader adds texture that fades in at close range.
+  - Terrain altitude queries and swept-sphere surface collision keep the ship out of mountains and crater floors.
+
+- **Landing and Exploring on Foot**:
+  - Near a surface the flight frame co-rotates with the planet, so the ground below holds still while the planet spins and orbits.
+  - Press `G` close to the ground to land (landing is never automatic, so you can skim the surface). The ship settles level, shuts its engines down and stays parked in the planet's frame.
+  - Night sides are no longer pitch black: a dim sky-glow lights the ground near the surface, and the ship's headlight and your lantern switch on automatically in the dark (`N` toggles them).
+  - The parked ship is solid when you walk around it; you can climb onto its wings.
+  - Press `F` to step out and walk in first person (WASD, Shift to run, Space to jump) with gravity scaled to the body's size. Swim on water worlds; press `F` next to the ship to board again, `W` to take off.
+
+- **Asteroid Belts**:
+  - Most systems have an asteroid belt in a gap between planet orbits: a dust band visible from anywhere, and solid rocks of many sizes streamed in around you when you fly into it.
+
+- **Atmospheres**:
+  - Ray-marched scattering shell per planet: a bright limb and haze from space, sunset-tinted terminators, and a real sky when you are near the surface.
+  - Each variant has its own scattering and sunset colors and density, from thin dusty Mars-like air with blue sunsets to thick Venus-like haze.
+
 - **Keplerian & Newtonian Orbital Mechanics**:
   - Closed-form orbital simulation based on Newton-Raphson Kepler equation solving ($M = E - e \sin E$).
   - Variable orbital eccentricity and inclination tilt for realistic planetary motion.
@@ -58,6 +83,10 @@ An interactive, playable 3D space exploration prototype built with Three.js and 
 | **R** | Target the body nearest the crosshair |
 | **L** | Toggle the list of bodies |
 | **H** | Hyperspace jump (to the seed in the input, or a random one) |
+| **G** | Land (close to the ground and slow) |
+| **F** | Step out of the ship / board it again |
+| **N** | Lights: auto at night / off |
+| **W A S D**, **Shift**, **Space** | On foot: walk, run, jump |
 | **F1 / ?** | Help |
 
 ---
@@ -84,8 +113,9 @@ npm run preview
 ### Running Tests
 ```bash
 node tests/test_flight_and_world.mjs
+node tests/test_terrain.mjs
 ```
-Covers generation determinism and spacing, throttle/boost/brake behaviour, cruise drive slowdown and auto-disengage, collisions, local reference frames and targeting.
+Covers generation determinism, orbital spacing, terrain profiles and LOD transitions, flight controls, cruise drive slowdown, collisions against 3D terrain, and local frames.
 
 ---
 
@@ -98,12 +128,20 @@ src/
 ├── index.html                  # HTML entry point with canvas and #hud-container
 ├── style.css                   # Global styles
 ├── script.js                   # Application bootstrap
-├── game.js                     # Game loop: orbits -> frame carry -> flight -> collisions -> camera -> HUD
+├── game.js                     # Game loop: orbits -> frame carry -> flight -> terrain LOD -> collisions -> camera -> HUD
+├── terrain/
+│   ├── terrainNoise.js         # 3D Simplex noise, fBm, ridged multifractal & procedural craters
+│   ├── terrainProfiles.js      # Biome configurations (Terrestrial, Desert, Ice, Rocky, Moon)
+│   ├── terrainGenerator.js     # getTerrainHeight(), surface positions & analytical normals
+│   ├── terrainGeometry.js      # Spherified cube-sphere mesh builder with vertex attributes
+│   ├── terrainMaterials.js     # Elevation and slope-based PBR terrain shader
+│   ├── terrainLOD.js           # Distance-based LOD manager with hysteresis
+│   └── terrainCollision.js     # Terrain altitude queries and swept-sphere collision
 ├── utils/
 │   └── random.js               # Deterministic PRNG & system namer
 ├── systems/
 │   ├── solarSystemGenerator.js # Procedural generation & mesh builder
-│   ├── celestialBodies.js      # Body registry: local frames, nearest body, collisions, crosshair picking
+│   ├── celestialBodies.js      # Body registry: local frames, nearest body, terrain collisions, crosshair picking
 │   ├── targetingSystem.js      # Target selection & telemetry (distance, closing speed, ETA)
 │   └── hyperspace.js           # Hyperspace state machine & warp effects
 ├── physics/
@@ -123,16 +161,17 @@ src/
 
 ## Units & Scale
 
-1 u = 1 km.
+1 u = 100 m (the HUD shows km and m). Constants live in `src/utils/scale.js`.
 
-- **Spaceship**: ~2.5 u long.
+- **Player**: ~0.018 u (1.8 m) tall, walks at 3 m/s.
+- **Spaceship**: ~0.27 u (27 m) long.
 - **Moons**: radius ~150–500 u.
 - **Rocky / desert / ice / ocean planets**: radius 500–1,250 u.
 - **Gas giants**: radius 2,600–4,200 u, optional rings out to 2.4× radius.
 - **Stars**: radius 4,500–14,000 u.
 - **Orbits**: first planet at ~3.5 star radii + 8,000 u, then 18,000–36,000 u apart (systems span roughly 100,000–300,000 u). Inner planets take ~25–35 minutes per orbit.
-- **Speeds**: normal drive up to 300 u/s, boost 900 u/s, cruise drive up to 40,000 u/s.
-- **Rendering**: camera near 0.5 u, far 4,000,000 u, with `logarithmicDepthBuffer`.
+- **Speeds**: normal drive up to 20 u/s, boost 70 u/s (12 s, recharges in 4 s), cruise drive up to 40,000 u/s (capped by altitude, drops out 60 u above the ground).
+- **Rendering**: camera near 0.004 u, far 4,000,000 u, with `logarithmicDepthBuffer`.
 
 ---
 

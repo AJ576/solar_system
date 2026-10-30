@@ -6,8 +6,17 @@ import * as THREE from 'three';
  * along the velocity vector, providing immediate, high-fidelity optical flow velocity cues.
  */
 export class SpaceDust {
-  constructor(scene, count = 800, volumeRadius = 45.0) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {number} count Number of particles
+   * @param {number} volumeRadius Half-size of the wrapping box around the ship
+   * @param {number} referenceSpeed Speed at which streaks reach full opacity
+   */
+  constructor(scene, count = 800, volumeRadius = 45.0, referenceSpeed = 150) {
     this.scene = scene;
+    this.referenceSpeed = referenceSpeed;
+    // Streak length per unit of speed, scaled with the volume so a smaller ship gets shorter streaks
+    this.speedScale = (volumeRadius / 45.0) * (150 / referenceSpeed);
     this.count = count;
     this.volumeRadius = volumeRadius;
 
@@ -97,14 +106,14 @@ export class SpaceDust {
     // At rest: very short dot (~0.05u). At 150u/s: ~1.2u. At 450u/s boost: ~4.5u.
     // Streak length grows with speed but is capped so cruise-drive speeds don't fill the screen
     const streakLengthFactor = isBoosting ? 0.016 : 0.009;
-    const streakLength = Math.min(speed * streakLengthFactor, 8.0);
+    const streakLength = Math.min(speed * streakLengthFactor * this.speedScale, this.volumeRadius * 0.18);
     const inv = speed > 1e-6 ? streakLength / speed : 0;
     const vx = shipVelocity ? shipVelocity.x * inv : 0;
     const vy = shipVelocity ? shipVelocity.y * inv : 0;
     const vz = shipVelocity ? shipVelocity.z * inv : 0;
 
     // Boost opacity and color intensity
-    this.material.opacity = isBoosting ? 0.95 : THREE.MathUtils.lerp(0.35, 0.75, Math.min(1.0, speed / 150.0));
+    this.material.opacity = isBoosting ? 0.95 : THREE.MathUtils.lerp(0.35, 0.75, Math.min(1.0, speed / this.referenceSpeed));
 
     const pos = this.linePositions;
     const pPos = this.particlePositions;

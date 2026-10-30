@@ -8,10 +8,14 @@ import {
   createRingTexture,
   createStarPhotosphereTexture
 } from '../visuals/proceduralTextures.js';
+import { getTerrainProfile } from '../terrain/terrainProfiles.js';
+import { PlanetTerrain } from '../terrain/terrainLOD.js';
+import { AsteroidBelt } from './asteroidBelt.js';
+import { createAtmosphere } from '../visuals/atmosphere.js';
 
 /**
- * World scale: 1 unit = 1 km. The ship is ~2.5 u long, so a rocky planet is
- * hundreds of times larger than the player and a star dwarfs everything.
+ * World scale: 1 unit = 100 m (see utils/scale.js). The ship is ~0.27 u long, so a
+ * rocky planet is thousands of times larger than the ship and a star dwarfs everything.
  * Inter-planet distances are tens of thousands of units, crossed with the cruise drive.
  */
 
@@ -60,33 +64,29 @@ const PLANET_TYPE_CONFIGS = {
   'Rocky': {
     radiusRange: [500, 800],
     colors: [0x8c7853, 0x9e8b70, 0x7a6b58, 0x6e7f80, 0xa08264, 0x5a524c, 0x82705f],
-    roughnessRange: [0.85, 0.95],
-    atmosphere: null
+    roughnessRange: [0.85, 0.95]
   },
   'Desert': {
     radiusRange: [650, 950],
     colors: [0xd49b52, 0xcc7733, 0xe29d52, 0xc16a3c, 0xdf8437, 0xbb5a28, 0xdaa06d],
-    roughnessRange: [0.8, 0.92],
-    atmosphere: { color: 0xffb27a, strength: 0.55 }
+    roughnessRange: [0.8, 0.92]
   },
   'Ocean': {
     radiusRange: [850, 1250],
     colors: [0x1f4e79, 0x2471a3, 0x1b4f72, 0x2e86c1, 0x117864, 0x148f77, 0x2980b9],
-    roughnessRange: [0.45, 0.6],
-    atmosphere: { color: 0x6fb6ff, strength: 1.0 }
+    roughnessRange: [0.45, 0.6]
   },
   'Ice': {
     radiusRange: [750, 1050],
     colors: [0xcceeff, 0xa6d8f0, 0xd0f0fd, 0x88c4e0, 0xbfe3f7, 0xdaeef8],
-    roughnessRange: [0.35, 0.5],
-    atmosphere: { color: 0xbfe6ff, strength: 0.5 }
+    roughnessRange: [0.35, 0.5]
   },
   'Gas Giant': {
     radiusRange: [2600, 4200],
     colors: [0xd9822b, 0xbf5700, 0x9b59b6, 0x6c3483, 0xaf601a, 0xca6f1e, 0x884ea0],
     secondaryColors: [0x3c1b63, 0x873600, 0x1a5276, 0xf39c12, 0x512e5f],
     roughnessRange: [0.6, 0.75],
-    atmosphere: { color: 0xffd9a8, strength: 0.7 }
+    atmosphere: { color: 0xffd9a8, sunsetColor: 0xff8a50, density: 0.9, height: 0.04, falloff: 3.0 }
   }
 };
 
@@ -124,7 +124,27 @@ export function generateSolarSystemData(seed) {
   let currentDistance = star.radius * 3.5 + 8000;
   let prevAphelion = currentDistance;
 
+  // Asteroid belt: its own PRNG stream so it doesn't reshuffle the planets of existing seeds
+  const beltPrng = createPRNG(`${seed}_belt`);
+  const beltSlot = planetCount >= 3 && beltPrng.chance(0.75) ? beltPrng.rangeInt(1, planetCount - 1) : -1;
+  let asteroidBelt = null;
+
   for (let i = 0; i < planetCount; i++) {
+    if (i === beltSlot) {
+      const innerRadius = prevAphelion + 9000;
+      const width = beltPrng.range(6000, 10000);
+      asteroidBelt = {
+        innerRadius,
+        outerRadius: innerRadius + width,
+        thickness: beltPrng.range(500, 1100),
+        density: beltPrng.range(0.6, 1.0),
+        seed: (hashSeed(seed) ^ 0x51ed27) >>> 0,
+        color: beltPrng.choice([0x8a8178, 0x7a6e62, 0x6f6a66, 0x8c7a66, 0x9a8f84])
+      };
+      prevAphelion = asteroidBelt.outerRadius;
+      currentDistance = Math.max(currentDistance, asteroidBelt.outerRadius);
+    }
+
     const eccentricity = prng.range(0.01, 0.1);
 
     // Non-overlapping orbits: perihelion clears the previous aphelion by a generous gap
@@ -146,9 +166,13 @@ export function generateSolarSystemData(seed) {
     if (isInner) {
       planetType = prng.choice(['Rocky', 'Desert']);
     } else if (isOuter) {
-      planetType = prng.choice(['Gas Giant', 'Ice']);
+      planetType = prng.choice(['Gas Giant', 'Gas Giant', 'Ice']);
     } else {
       planetType = prng.choice(['Ocean', 'Desert', 'Rocky']);
+    }
+    // Every system gets at least one gas giant, in its outermost orbit if nothing else rolled one
+    if (i === planetCount - 1 && !planets.some((p) => p.type === 'Gas Giant')) {
+      planetType = 'Gas Giant';
     }
 
     const typeConfig = PLANET_TYPE_CONFIGS[planetType];
@@ -185,8 +209,12 @@ export function generateSolarSystemData(seed) {
       const moonDistance = currentMoonDist + prng.range(radius * 0.8, radius * 1.6);
       currentMoonDist = moonDistance;
 
+      const moonId = `${systemName}_P${i + 1}_M${m + 1}`;
+      const moonSeed = hashSeed(moonId) >>> 0;
+      const moonTerrainProfile = getTerrainProfile('Moon', moonSeed, moonRadius);
+
       moons.push({
-        id: `${systemName}_P${i + 1}_M${m + 1}`,
+        id: moonId,
         name: `${planetName}${MOON_LETTERS[m] || m + 1}`,
         radius: moonRadius,
         distance: moonDistance,
@@ -195,9 +223,13 @@ export function generateSolarSystemData(seed) {
         inclination: prng.range(-0.15, 0.15),
         color: prng.choice([0x888888, 0xaaaaaa, 0xbbbbbb, 0x998877, 0x778899]),
         startAngle: prng.range(0, Math.PI * 2),
-        rotationSpeed: (Math.PI * 2) / prng.range(300, 900)
+        rotationSpeed: (Math.PI * 2) / prng.range(300, 900),
+        terrainProfile: moonTerrainProfile
       });
     }
+
+    const planetSeed = (hashSeed(seed) + i * 37) >>> 0;
+    const terrainProfile = getTerrainProfile(planetType, planetSeed, radius);
 
     planets.push({
       id: `${systemName}_P${i + 1}`,
@@ -219,7 +251,8 @@ export function generateSolarSystemData(seed) {
       ringProps,
       ringTilt: prng.range(-0.25, 0.25),
       moons,
-      seedNum: (hashSeed(seed) + i * 37) >>> 0
+      seedNum: planetSeed,
+      terrainProfile
     });
   }
 
@@ -227,7 +260,8 @@ export function generateSolarSystemData(seed) {
     seed,
     name: systemName,
     star,
-    planets
+    planets,
+    asteroidBelt
   };
 }
 
@@ -239,56 +273,6 @@ function hashSeed(seed) {
     h |= 0;
   }
   return h;
-}
-
-/**
- * Fresnel rim atmosphere, brightest on the day side. Includes the log-depth chunks
- * because the renderer uses a logarithmic depth buffer.
- */
-function createAtmosphereMaterial(color, strength) {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Color(color) },
-      uStrength: { value: strength },
-      uSunPosition: { value: new THREE.Vector3(0, 0, 0) }
-    },
-    vertexShader: /* glsl */`
-      #include <common>
-      #include <logdepthbuf_pars_vertex>
-      varying vec3 vWorldNormal;
-      varying vec3 vWorldPos;
-      void main() {
-        vec4 worldPos = modelMatrix * vec4(position, 1.0);
-        vWorldPos = worldPos.xyz;
-        vWorldNormal = normalize(mat3(modelMatrix) * normal);
-        gl_Position = projectionMatrix * viewMatrix * worldPos;
-        #include <logdepthbuf_vertex>
-      }
-    `,
-    fragmentShader: /* glsl */`
-      #include <common>
-      #include <logdepthbuf_pars_fragment>
-      uniform vec3 uColor;
-      uniform float uStrength;
-      uniform vec3 uSunPosition;
-      varying vec3 vWorldNormal;
-      varying vec3 vWorldPos;
-      void main() {
-        #include <logdepthbuf_fragment>
-        vec3 viewDir = normalize(cameraPosition - vWorldPos);
-        vec3 n = normalize(vWorldNormal);
-        // Back-face shell: rim where the normal is perpendicular to the view
-        float rim = 1.0 - abs(dot(viewDir, n));
-        float glow = pow(rim, 3.0);
-        float day = smoothstep(-0.35, 0.45, dot(-n, normalize(uSunPosition - vWorldPos)));
-        gl_FragColor = vec4(uColor * glow * day * uStrength, 1.0);
-      }
-    `,
-    side: THREE.BackSide,
-    blending: THREE.AdditiveBlending,
-    transparent: true,
-    depthWrite: false
-  });
 }
 
 function createGlowTexture() {
@@ -402,10 +386,16 @@ export function buildSolarSystemMeshes(systemData, scene) {
     planetGroup.add(axisGroup);
 
     const isGiant = planetData.type === 'Gas Giant';
-    const planetGeo = new THREE.SphereGeometry(planetData.radius, isGiant ? 128 : 96, isGiant ? 96 : 64);
+    const hasTerrain = !!planetData.terrainProfile?.hasTerrain;
+    // Terrain bodies get their geometry and material from PlanetTerrain below
+    const planetGeo = hasTerrain
+      ? new THREE.BufferGeometry()
+      : new THREE.SphereGeometry(planetData.radius, isGiant ? 128 : 96, isGiant ? 96 : 64);
 
     let surfaceTex = null;
-    if (isGiant) {
+    if (hasTerrain) {
+      surfaceTex = null;
+    } else if (isGiant) {
       surfaceTex = createGasGiantTexture(planetData.color, planetData.secondaryColor, planetData.seedNum);
     } else if (planetData.type === 'Ocean' || planetData.type === 'Desert') {
       surfaceTex = createTerrestrialTexture(planetData.type, planetData.color, planetData.seedNum);
@@ -426,7 +416,7 @@ export function buildSolarSystemMeshes(systemData, scene) {
 
     let cloudMesh = null;
     if (planetData.type === 'Ocean') {
-      const cloudGeo = new THREE.SphereGeometry(planetData.radius * 1.012, 96, 64);
+      const cloudGeo = new THREE.SphereGeometry(planetData.radius * 1.045, 96, 64);
       const cloudTex = createCloudTexture(planetData.seedNum + 55);
       const cloudMat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
@@ -437,13 +427,15 @@ export function buildSolarSystemMeshes(systemData, scene) {
         depthWrite: false
       });
       cloudMesh = new THREE.Mesh(cloudGeo, cloudMat);
+      cloudMesh.renderOrder = 1;
       axisGroup.add(cloudMesh);
     }
 
-    const atmoConfig = PLANET_TYPE_CONFIGS[planetData.type]?.atmosphere;
+    const atmoConfig = hasTerrain
+      ? planetData.terrainProfile.atmosphere
+      : PLANET_TYPE_CONFIGS[planetData.type]?.atmosphere;
     if (atmoConfig) {
-      const atmoGeo = new THREE.SphereGeometry(planetData.radius * (isGiant ? 1.04 : 1.06), 64, 48);
-      const atmoMesh = new THREE.Mesh(atmoGeo, createAtmosphereMaterial(atmoConfig.color, atmoConfig.strength));
+      const atmoMesh = createAtmosphere({ planetRadius: planetData.radius, config: atmoConfig, sun: starMesh });
       atmoMesh.name = `Atmosphere_${planetData.name}`;
       planetGroup.add(atmoMesh);
     }
@@ -477,13 +469,19 @@ export function buildSolarSystemMeshes(systemData, scene) {
       axisGroup.add(ringMesh);
     }
 
-    planetMesh.userData = { ...planetData, cloudMesh };
+    let terrainLOD = null;
+    if (planetData.terrainProfile?.hasTerrain) {
+      terrainLOD = new PlanetTerrain(planetData, planetMesh, planetData.terrainProfile);
+    }
+
+    planetMesh.userData = { ...planetData, cloudMesh, terrainLOD };
 
     // Moons orbit the non-rotating planet frame
     const moonEntries = [];
     (planetData.moons || []).forEach((moonData) => {
-      const moonGeo = new THREE.SphereGeometry(moonData.radius, 64, 48);
-      const moonTex = createCrateredTexture(moonData.color, hashSeed(moonData.id));
+      const moonHasTerrain = !!moonData.terrainProfile?.hasTerrain;
+      const moonGeo = moonHasTerrain ? new THREE.BufferGeometry() : new THREE.SphereGeometry(moonData.radius, 64, 48);
+      const moonTex = moonHasTerrain ? null : createCrateredTexture(moonData.color, hashSeed(moonData.id));
       const moonMat = new THREE.MeshStandardMaterial({
         color: moonTex ? 0xffffff : moonData.color,
         map: moonTex || null,
@@ -492,9 +490,14 @@ export function buildSolarSystemMeshes(systemData, scene) {
       });
       const moonMesh = new THREE.Mesh(moonGeo, moonMat);
       moonMesh.name = `Moon_${moonData.name}`;
-      moonMesh.userData = { ...moonData };
+
+      let moonTerrainLOD = null;
+      if (moonData.terrainProfile?.hasTerrain) {
+        moonTerrainLOD = new PlanetTerrain(moonData, moonMesh, moonData.terrainProfile);
+      }
+      moonMesh.userData = { ...moonData, terrainLOD: moonTerrainLOD };
       planetGroup.add(moonMesh);
-      moonEntries.push({ data: moonData, mesh: moonMesh });
+      moonEntries.push({ data: moonData, mesh: moonMesh, terrainLOD: moonTerrainLOD });
     });
 
     systemGroup.add(planetGroup);
@@ -503,11 +506,18 @@ export function buildSolarSystemMeshes(systemData, scene) {
       data: planetData,
       group: planetGroup,
       mesh: planetMesh,
+      terrainLOD,
       cloudMesh,
       orbitLine,
       moons: moonEntries
     });
   });
+
+  let asteroidBelt = null;
+  if (systemData.asteroidBelt) {
+    asteroidBelt = new AsteroidBelt(systemData.asteroidBelt);
+    systemGroup.add(asteroidBelt.group);
+  }
 
   if (scene) {
     scene.add(systemGroup);
@@ -517,7 +527,8 @@ export function buildSolarSystemMeshes(systemData, scene) {
     group: systemGroup,
     starMesh,
     starLight,
-    planetEntries
+    planetEntries,
+    asteroidBelt
   };
 }
 
@@ -527,7 +538,18 @@ export function buildSolarSystemMeshes(systemData, scene) {
 export function disposeSolarSystem(systemObject, scene) {
   if (!systemObject) return;
 
-  const { group, starLight } = systemObject;
+  const { group, starLight, planetEntries, asteroidBelt } = systemObject;
+
+  if (asteroidBelt) asteroidBelt.dispose();
+
+  if (planetEntries) {
+    for (const entry of planetEntries) {
+      if (entry.terrainLOD) entry.terrainLOD.dispose();
+      for (const m of (entry.moons || [])) {
+        if (m.terrainLOD) m.terrainLOD.dispose();
+      }
+    }
+  }
 
   if (group) {
     group.traverse((child) => {

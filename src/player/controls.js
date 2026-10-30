@@ -17,27 +17,27 @@ import * as THREE from 'three';
  * a second, so steering feels like flying but momentum is still perceptible.
  */
 export const DEFAULT_FLIGHT_CONFIG = Object.freeze({
-  // Normal drive (u/s, 1 u = 1 km)
-  normalMaxSpeed: 300,
+  // Normal drive (u/s; 1 u = 100 m, the ship is ~0.27 u long)
+  normalMaxSpeed: 20,
   reverseThrottleMin: -0.2,
-  accel: 160,
-  decel: 240,
-  brakeDecel: 450,
+  accel: 10,
+  decel: 14,
+  brakeDecel: 30,
   throttleRate: 0.8,           // throttle units per second while W/S held
   assistRate: 2.5,             // how fast velocity aligns with the nose (1/s)
 
   // Boost
-  boostSpeed: 900,
-  boostAccel: 520,
+  boostSpeed: 70,
+  boostAccel: 40,
   boostCapacity: 100,
-  boostDrainRate: 20,          // 5 s of continuous boost
-  boostRechargeRate: 12,
+  boostDrainRate: 8,           // 12.5 s of continuous boost
+  boostRechargeRate: 25,
 
   // Cruise drive
   cruiseSpoolTime: 1.5,
   cruiseDistanceFactor: 0.55,  // cap = altitude * factor (per second)
   cruiseMaxSpeed: 40000,
-  cruiseDropAltitude: 700,     // auto-disengage below this altitude while approaching
+  cruiseDropAltitude: 60,      // auto-disengage below this altitude while approaching
   cruiseAssistRate: 4.0,
 
   // Rotation
@@ -49,14 +49,15 @@ export const DEFAULT_FLIGHT_CONFIG = Object.freeze({
   keyRotationResponse: 8,
 
   // Chase camera
-  cameraDistance: 7.0,
-  cameraHeight: 1.9,
+  cameraDistance: 0.7,
+  cameraHeight: 0.19,
   cameraLag: 10,               // rotational follow rate (1/s)
   baseFOV: 62,
   boostFOV: 8,
   cruiseFOV: 10,
 
-  shipRadius: 1.6
+  shipRadius: 0.14,
+  hardImpactSpeed: 4           // u/s into a surface; slower contacts just slide
 });
 
 export class SpaceshipControls {
@@ -420,22 +421,37 @@ export class SpaceshipControls {
   }
 
   /**
+   * Rotates the ship, its velocity and the chase camera with a rotating reference frame
+   * (a spinning planet the ship is flying close to), so the ground below stays put.
+   * @param {THREE.Quaternion} q World-space rotation for this frame
+   */
+  applyFrameRotation(q) {
+    this.ship.quaternion.premultiply(q).normalize();
+    this.cameraQuat.premultiply(q).normalize();
+    this.velocity.applyQuaternion(q);
+  }
+
+  /**
    * Called after a collision pushed the ship back onto a surface.
    * @param {THREE.Vector3} normal Outward surface normal at the contact point
    * @returns {number} Impact speed along the normal (u/s)
    */
   applyImpact(normal) {
     const into = -this.velocity.dot(normal);
+    const hard = into > this.config.hardImpactSpeed;
     if (into > 0) {
-      // Remove the inward component, keep a little bounce and scrub some tangential speed
-      this.velocity.addScaledVector(normal, into * 1.15);
-      this.velocity.multiplyScalar(0.6);
+      // Remove the inward component; real crashes also bounce and scrub speed
+      this.velocity.addScaledVector(normal, into * (hard ? 1.15 : 1.0));
+      if (hard) this.velocity.multiplyScalar(0.6);
     }
-    const forward = this._vForward.set(0, 0, -1).applyQuaternion(this.ship.quaternion);
-    this.speed = Math.max(0, this.velocity.dot(forward));
     if (this.mode === 'cruise' || this.cruiseSpool > 0) this.disengageCruise('impact');
-    this.throttle = Math.min(this.throttle, this.speed / this.config.normalMaxSpeed);
-    this.isBoosting = false;
+    if (hard) {
+      const forward = this._vForward.set(0, 0, -1).applyQuaternion(this.ship.quaternion);
+      this.speed = Math.max(0, this.velocity.dot(forward));
+      this.throttle = Math.min(this.throttle, this.speed / this.config.normalMaxSpeed);
+      this.isBoosting = false;
+    }
+    // Grazing the ground keeps throttle and speed, so you can always power away
     return Math.max(0, into);
   }
 
@@ -447,7 +463,7 @@ export class SpaceshipControls {
     this.cameraQuat.slerp(this.ship.quaternion, 1 - Math.exp(-c.cameraLag * dt));
 
     const speedFrac = Math.min(1, this.velocity.length() / c.boostSpeed);
-    this._vOffset.set(0, c.cameraHeight, c.cameraDistance + speedFrac * 1.2)
+    this._vOffset.set(0, c.cameraHeight, c.cameraDistance * (1 + speedFrac * 0.17))
       .applyQuaternion(this.cameraQuat)
       .add(this.ship.position);
     this.camera.position.copy(this._vOffset);

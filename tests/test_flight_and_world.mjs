@@ -130,7 +130,7 @@ console.log('\n[Cruise drive]');
   check('Cruise engages after spool', engaged);
   check(`Cruise reaches high speed (${peakSpeed.toFixed(0)} u/s)`, peakSpeed > 5000);
   check('Cruise drops out near the body at normal speed',
-    dropAltitude !== null && dropAltitude > 100 && dropSpeed <= controls.config.normalMaxSpeed + 1,
+    dropAltitude !== null && dropAltitude > controls.config.cruiseDropAltitude * 0.5 && dropSpeed <= controls.config.normalMaxSpeed + 1,
     `dropAltitude=${dropAltitude?.toFixed(0)} dropSpeed=${dropSpeed?.toFixed(0)}`);
 }
 
@@ -149,6 +149,20 @@ console.log('\n[Collisions & local frames]');
   const to = planet.position.clone().add(new THREE.Vector3(-planet.radius - 50, 0, 0)); // tunnels through in one step
   const hit = bodies.resolveCollision(from, to, 1.6);
   check('Swept collision stops a ship that would tunnel through a planet', !!hit && to.distanceTo(planet.position) >= planet.radius);
+
+  // Ship flying near the planet at safe altitude within maxElevation does not get falsely collided or stuck
+  const nearFrom = planet.position.clone().add(new THREE.Vector3(planet.radius + 15, 0, 0));
+  const nearTo = nearFrom.clone().add(new THREE.Vector3(0, 5, 0));
+  const nearHit = bodies.resolveCollision(nearFrom, nearTo, 1.6);
+  check('Ship flying above terrain within maxElevation range does not falsely collide', !nearHit);
+
+  // Ship inside a planet is cleanly pushed out to the surface with an outward normal
+  const insideFrom = planet.position.clone().add(new THREE.Vector3(planet.radius * 0.5, 0, 0));
+  const insideTo = insideFrom.clone();
+  const insideHit = bodies.resolveCollision(insideFrom, insideTo, 1.6);
+  const outwardDot = insideHit ? insideHit.normal.dot(new THREE.Vector3(1, 0, 0)) : 0;
+  check('Ship inside planet is ejected outside surface', !!insideHit && insideTo.distanceTo(planet.position) >= planet.radius);
+  check('Collision normal points outward away from core', outwardDot > 0.5, `outwardDot=${outwardDot.toFixed(3)}`);
 
   // Park near the planet and let time pass: relative offset should stay put
   const ship = planet.position.clone().add(new THREE.Vector3(0, 0, planet.radius * 3));
@@ -175,6 +189,95 @@ console.log('\n[Collisions & local frames]');
   check('Target list contains star, planets and moons',
     targeting.getTargetList().length === 1 + data.planets.length + data.planets.reduce((n, p) => n + p.moons.length, 0));
 
+  disposeSolarSystem(meshes, null);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n[Flying close to terrain]');
+{
+  const { getTerrainHeight, getSolidSurfaceHeight } = await import('../src/terrain/terrainGenerator.js');
+  const data = generateSolarSystemData('Sol-Prime-42');
+  const meshes = buildSolarSystemMeshes(data, null);
+  let simTime = 0;
+  updateOrbits(meshes, data, 0, simTime);
+  const bodies = new CelestialBodies(data, meshes);
+  const planet = bodies.bodies.find(b => b.kind === 'planet' && b.terrainProfile?.hasTerrain);
+  const p = planet.terrainProfile;
+
+  // Find a spot in a basin (below the base radius) and one on high ground
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  let basin = null, high = null;
+  for (let i = 0; i < 4000 && (!basin || !high); i++) {
+    const y = 1 - (2 * i + 1) / 4000, r = Math.sqrt(1 - y * y);
+    const d = new THREE.Vector3(r * Math.cos(golden * i), y, r * Math.sin(golden * i));
+    const h = getSolidSurfaceHeight(d, p.seedNum, p);
+    if (!basin && h < -p.maxElevation * 0.15) basin = d;
+    if (!high && h > p.maxElevation * 0.3) high = d;
+  }
+
+  const flyFrom = (localDir, label) => {
+    const { controls } = makeShip();
+    const ship = controls.ship;
+    const mesh = planet.mesh;
+    mesh.updateWorldMatrix(true, false);
+    const h = getSolidSurfaceHeight(localDir, p.seedNum, p);
+    const start = localDir.clone().multiplyScalar(planet.radius + h + 0.3).applyMatrix4(mesh.matrixWorld);
+    ship.position.copy(start);
+    // Nose 35° above the horizon
+    const up = start.clone().sub(planet.position).normalize();
+    const tangent = new THREE.Vector3().crossVectors(up, new THREE.Vector3(0.3, 1, 0.2).normalize()).normalize();
+    const look = start.clone().addScaledVector(tangent, Math.cos(0.6)).addScaledVector(up, Math.sin(0.6));
+    ship.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(start, look, up));
+    controls.throttle = 1;
+    bodies.sample(true);
+
+    const prev = new THREE.Vector3();
+    let hits = 0;
+    for (let t = 0; t < 6; t += DT) {
+      simTime += DT;
+      updateOrbits(meshes, data, DT, simTime);
+      bodies.sample();
+      const carry = bodies.computeFrameCarry(ship.position);
+      ship.position.add(carry.displacement);
+      if (carry.rotation) controls.applyFrameRotation(carry.rotation);
+      const near = bodies.findNearest(ship.position);
+      controls.setEnvironment({ altitude: near.altitude, radius: near.body.radius, name: '', toBody: near.body.position.clone().sub(ship.position).normalize() });
+      prev.copy(ship.position);
+      controls.update(DT);
+      const hit = bodies.resolveCollision(prev, ship.position, controls.config.shipRadius);
+      if (hit) { hits++; controls.applyImpact(hit.normal); }
+    }
+    const alt = bodies.findNearest(ship.position).altitude;
+    check(`${label}: full throttle nose-up climbs away from the ground`, alt > 20, `alt=${alt.toFixed(2)} hits=${hits} throttle=${controls.throttle.toFixed(2)}`);
+  };
+  if (basin) flyFrom(basin, 'Basin'); else check('found a basin to test', false);
+  if (high) flyFrom(high, 'Highland'); else check('found high ground to test', false);
+
+  // Hovering low with no throttle must not be dragged into or stuck to the ground
+  {
+    const { controls } = makeShip();
+    const ship = controls.ship;
+    const dir = (high || basin).clone();
+    planet.mesh.updateWorldMatrix(true, false);
+    const h = getSolidSurfaceHeight(dir, p.seedNum, p);
+    ship.position.copy(dir.clone().multiplyScalar(planet.radius + h + 0.5).applyMatrix4(planet.mesh.matrixWorld));
+    bodies.sample(true);
+    const prev = new THREE.Vector3();
+    let hits = 0;
+    for (let t = 0; t < 3; t += DT) {
+      simTime += DT;
+      updateOrbits(meshes, data, DT, simTime);
+      bodies.sample();
+      const carry = bodies.computeFrameCarry(ship.position);
+      ship.position.add(carry.displacement);
+      if (carry.rotation) controls.applyFrameRotation(carry.rotation);
+      prev.copy(ship.position);
+      controls.update(DT);
+      if (bodies.resolveCollision(prev, ship.position, controls.config.shipRadius)) hits++;
+    }
+    const alt = bodies.findNearest(ship.position).altitude;
+    check('Hovering 50 m up stays put with no ground contact', hits === 0 && Math.abs(alt - 0.5) < 0.1, `alt=${alt.toFixed(3)} hits=${hits}`);
+  }
   disposeSolarSystem(meshes, null);
 }
 

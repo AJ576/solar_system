@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getTerrainAltitude } from '../terrain/terrainCollision.js';
 
 /**
  * Flat registry of every body in the current system (star, planets, moons) with
@@ -18,6 +19,13 @@ export class CelestialBodies {
     this._delta = new THREE.Vector3();
     this._seg = new THREE.Vector3();
     this._toCenter = new THREE.Vector3();
+    this._invPrev = new THREE.Matrix4();
+    this._frameDelta = new THREE.Matrix4();
+    this._rotPos = new THREE.Vector3();
+    this._qFrame = new THREE.Quaternion();
+    this._qIdentity = new THREE.Quaternion();
+    this._scratchPos = new THREE.Vector3();
+    this._scratchScale = new THREE.Vector3();
     if (systemData) this.setSystem(systemData, systemMeshes);
   }
 
@@ -52,10 +60,12 @@ export class CelestialBodies {
         kind: 'planet',
         radius: p.radius,
         object: entry.group || entry.mesh,
+        mesh: entry.mesh,
         parent: null,
         soi: Math.min(p.radius * 6 + 4000, 20000),
         // Rings are not solid, but treat the planet's collision radius as the surface
-        collisionRadius: p.radius
+        collisionRadius: p.radius,
+        terrainProfile: p.terrainProfile
       });
       this.bodies.push(planetBody);
 
@@ -69,8 +79,10 @@ export class CelestialBodies {
           kind: 'moon',
           radius: moon.radius,
           object: moonEntry.mesh,
+          mesh: moonEntry.mesh,
           parent: planetBody,
-          soi: moon.radius * 4 + 300
+          soi: moon.radius * 4 + 300,
+          terrainProfile: moon.terrainProfile
         }));
       });
     }
@@ -83,7 +95,10 @@ export class CelestialBodies {
       collisionRadius: def.radius,
       ...def,
       position: new THREE.Vector3(),
-      prevPosition: new THREE.Vector3()
+      prevPosition: new THREE.Vector3(),
+      // World matrix of the spinning surface (for co-rotating frames)
+      matrix: new THREE.Matrix4(),
+      prevMatrix: new THREE.Matrix4()
     };
   }
 
@@ -96,8 +111,16 @@ export class CelestialBodies {
     for (const b of this.bodies) {
       b.prevPosition.copy(b.position);
       b.object.updateWorldMatrix(true, false);
+      if (b.mesh && b.mesh !== b.object) {
+        b.mesh.updateWorldMatrix(true, false);
+      }
       b.position.setFromMatrixPosition(b.object.matrixWorld);
-      if (reset) b.prevPosition.copy(b.position);
+      b.prevMatrix.copy(b.matrix);
+      b.matrix.copy((b.mesh || b.object).matrixWorld);
+      if (reset) {
+        b.prevPosition.copy(b.position);
+        b.prevMatrix.copy(b.matrix);
+      }
     }
   }
 
@@ -147,18 +170,66 @@ export class CelestialBodies {
       if (w >= 0.5) frameBody = b;
     }
 
-    return { displacement: carry, frameBody };
+    // Near a solid surface the frame also spins with the body, so the ground below
+    // (and a landing spot) stays still instead of sliding past at rotation speed
+    let rotation = null;
+    let rotBody = null;
+    let rotWeight = 0;
+    for (const b of this.bodies) {
+      if (b.kind === 'star') continue;
+      const w = this.coRotationWeight(b, shipPos);
+      if (w > rotWeight) { rotWeight = w; rotBody = b; }
+    }
+    if (rotBody) {
+      // Rigid motion of the surface this frame: matrix * prevMatrix⁻¹
+      this._invPrev.copy(rotBody.prevMatrix).invert();
+      this._frameDelta.multiplyMatrices(rotBody.matrix, this._invPrev);
+      this._rotPos.copy(shipPos).applyMatrix4(this._frameDelta).sub(shipPos);
+      this._delta.subVectors(rotBody.position, rotBody.prevPosition);
+      // Replace the body's pure translation with its full rigid motion, weighted
+      carry.addScaledVector(this._rotPos.sub(this._delta), rotWeight);
+
+      this._frameDelta.decompose(this._scratchPos, this._qFrame, this._scratchScale);
+      rotation = this._qIdentity.identity().slerp(this._qFrame, rotWeight);
+    }
+
+    return { displacement: carry, frameBody, rotation, rotBody };
+  }
+
+  /**
+   * 1 close to a body's surface, 0 from half a radius up; the ship co-rotates with
+   * the body in between. Gas giants and moons included, stars excluded.
+   */
+  coRotationWeight(body, pos) {
+    if (body.kind === 'star') return 0;
+    const alt = pos.distanceTo(body.position) - body.radius;
+    const inner = body.radius * 0.2;
+    const outer = body.radius * 0.5;
+    if (alt <= inner) return 1;
+    if (alt >= outer) return 0;
+    const t = 1 - (alt - inner) / (outer - inner);
+    return t * t * (3 - 2 * t);
   }
 
   /**
    * Body whose surface is closest to `pos`.
+   * Evaluates exact terrain altitude when within proximity of a rocky body.
    * @returns {{ body: Object, altitude: number }|null}
    */
   findNearest(pos) {
     let best = null;
     let bestAlt = Infinity;
     for (const b of this.bodies) {
-      const alt = pos.distanceTo(b.position) - b.radius;
+      const centerDist = pos.distanceTo(b.position);
+      const approxAlt = centerDist - b.radius;
+
+      let alt = approxAlt;
+      if (b.terrainProfile?.hasTerrain && approxAlt < b.radius * 2.5) {
+        alt = getTerrainAltitude(b, pos).altitude;
+      } else {
+        alt = Math.max(0, approxAlt);
+      }
+
       if (alt < bestAlt) {
         bestAlt = alt;
         best = b;
@@ -168,7 +239,8 @@ export class CelestialBodies {
   }
 
   /**
-   * Swept-sphere collision of the ship moving from `from` to `to` against every body.
+   * Swept-sphere collision of the ship moving from `from` to `to` against every body,
+   * accounting for procedural terrain elevation where applicable.
    * On contact, `to` is moved back onto the surface (plus the ship radius).
    *
    * @param {THREE.Vector3} from Ship position before this frame's movement
@@ -179,37 +251,102 @@ export class CelestialBodies {
   resolveCollision(from, to, shipRadius) {
     let hit = null;
     for (const b of this.bodies) {
-      const R = b.collisionRadius + shipRadius;
+      const terrain = b.terrainProfile?.hasTerrain ? b.terrainProfile : null;
+      const maxElevation = terrain ? Math.max(0, terrain.maxElevation) : 0;
+      const baseR = b.collisionRadius + shipRadius;
+      const maxR = baseR + maxElevation;
       const center = b.position;
 
-      // Already inside (or ended inside): push straight out
+      const startDist = from.distanceTo(center);
       const endDist = to.distanceTo(center);
-      let contact = null;
-      if (endDist < R) {
-        contact = to.clone();
+      const seg = this._seg.subVectors(to, from);
+      const segLenSq = seg.lengthSq();
+
+      // Find closest distance along path [from, to] to the body center
+      let closestDist = Math.min(startDist, endDist);
+      let tClosest = endDist < startDist ? 1 : 0;
+      if (segLenSq > 1e-6) {
+        const f = this._toCenter.subVectors(from, center);
+        const t = -f.dot(seg) / segLenSq;
+        if (t > 0 && t < 1) {
+          tClosest = t;
+          const closestPoint = from.clone().addScaledVector(seg, t);
+          closestDist = closestPoint.distanceTo(center);
+        }
+      }
+
+      // Early out if entire motion segment is completely outside max bounding sphere
+      if (closestDist > maxR) {
+        continue;
+      }
+
+      let collided = false;
+      let contactPos = null;
+
+      if (terrain) {
+        // 1. Below the terrain surface (or a sea of water / lava) at the destination
+        const altQuery = getTerrainAltitude(b, to);
+        if (altQuery.altitude < shipRadius) {
+          collided = true;
+          contactPos = to.clone();
+        } else {
+          // 2. Tunnelling guard: the path dipped below the deepest point the surface can
+          //    reach (basins and craters sit below the base radius, so that is not enough)
+          const floorR = b.collisionRadius + Math.min(0, terrain.minElevation);
+          if (closestDist < floorR) {
+            collided = true;
+            contactPos = from.clone().addScaledVector(seg, tClosest);
+          }
+        }
       } else {
-        // Segment–sphere test so high speeds can't tunnel through small moons
-        const seg = this._seg.subVectors(to, from);
-        const segLenSq = seg.lengthSq();
-        if (segLenSq > 1e-6) {
+        // 1. Direct penetration at the destination
+        if (endDist < baseR) {
+          collided = true;
+          contactPos = to.clone();
+        } else if (segLenSq > 1e-6) {
+          // 2. Swept test so high speeds cannot tunnel through small moons
           const f = this._toCenter.subVectors(from, center);
           const bq = f.dot(seg);
-          const c = f.lengthSq() - R * R;
+          const c = f.lengthSq() - baseR * baseR;
           const disc = bq * bq - segLenSq * c;
-          if (c > 0 && bq < 0 && disc >= 0) {
+          if (disc >= 0) {
             const tHit = (-bq - Math.sqrt(disc)) / segLenSq;
             if (tHit >= 0 && tHit <= 1) {
-              contact = from.clone().addScaledVector(seg, tHit);
+              collided = true;
+              contactPos = from.clone().addScaledVector(seg, tHit);
             }
           }
         }
       }
 
-      if (contact) {
-        const normal = contact.sub(center);
-        if (normal.lengthSq() < 1e-9) normal.set(0, 1, 0);
-        normal.normalize();
-        to.copy(center).addScaledVector(normal, R + 0.05);
+      if (collided && contactPos) {
+        // Outward radial direction from body center
+        const radial = new THREE.Vector3().subVectors(contactPos, center);
+        if (radial.lengthSq() < 1e-6) {
+          radial.subVectors(from, center);
+        }
+        if (radial.lengthSq() < 1e-6) {
+          radial.set(0, 1, 0);
+        }
+        radial.normalize();
+
+        let effectiveRadius = b.collisionRadius;
+        let normal = radial.clone();
+
+        if (terrain) {
+          const altQuery = getTerrainAltitude(b, contactPos);
+          effectiveRadius = altQuery.surfaceRadius;
+          // Slope normals only make sense for shallow contacts; deep inside, push straight out
+          const shallow = contactPos.distanceTo(center) > altQuery.surfaceRadius - shipRadius * 4;
+          if (shallow && altQuery.normal && altQuery.normal.lengthSq() > 1e-4) {
+            if (altQuery.normal.dot(radial) > 0.1) {
+              normal.copy(altQuery.normal);
+            }
+          }
+        }
+
+        // Push ship out to surface + shipRadius + safety margin
+        to.copy(center).addScaledVector(radial, effectiveRadius + shipRadius * 1.05);
         hit = { body: b, normal };
       }
     }
