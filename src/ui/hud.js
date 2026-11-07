@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { KM_PER_UNIT } from '../utils/scale.js';
+import { FpsMeter } from './fpsMeter.js';
 
 /**
  * HUD — restrained instrument-style overlay.
@@ -125,6 +126,7 @@ const HELP_GROUPS = [
       [['O'], 'Toggle Settings (Audio, Graphics, Custom Seed)'],
       [['L'], 'Target list / All bodies'],
       [['H'], 'Hyperspace jump to a random system'],
+      [['F3'], 'Show / hide FPS counter'],
       [['F1', '?'], 'Show / hide this help'],
     ],
   },
@@ -284,6 +286,10 @@ const TEMPLATE = `
             <button class="hud-btn hud-settings__qbtn" data-ref="btnQualityHigh">High</button>
           </div>
           <div class="hud-settings__desc" data-ref="qualityDesc">Balanced visual fidelity and frame rate (1.5x resolution, 10 atmo steps, 600 dust particles).</div>
+          <div class="hud-settings__row">
+            <span>Show FPS Counter <kbd>F3</kbd></span>
+            <button class="hud-btn" data-ref="btnFpsToggle">Off</button>
+          </div>
         </div>
 
         <div class="hud-settings__section">
@@ -364,7 +370,24 @@ export class HUD {
     this._camPos = new THREE.Vector3();
     this._ndc = new THREE.Vector3();
 
+    this.fpsMeter = new FpsMeter(this.root);
+    this._syncFpsButton();
+
     this._bindEvents();
+  }
+
+  toggleFps() {
+    const on = this.fpsMeter.toggle();
+    this._syncFpsButton();
+    this.showNotification?.(on ? 'FPS Counter On' : 'FPS Counter Off', 1200);
+  }
+
+  _syncFpsButton() {
+    const btn = this.el.btnFpsToggle;
+    if (!btn) return;
+    const on = this.fpsMeter.enabled;
+    btn.textContent = on ? 'On' : 'Off';
+    btn.classList.toggle('is-active', on);
   }
 
   // -------------------------------------------------------------------------
@@ -400,6 +423,7 @@ export class HUD {
     e.btnQualityLow?.addEventListener('click', () => this.callbacks.onSetQuality?.('Low'));
     e.btnQualityMed?.addEventListener('click', () => this.callbacks.onSetQuality?.('Medium'));
     e.btnQualityHigh?.addEventListener('click', () => this.callbacks.onSetQuality?.('High'));
+    e.btnFpsToggle?.addEventListener('click', () => this.toggleFps());
     e.btnPhoto?.addEventListener('click', () => this.callbacks.onTogglePhotoMode?.());
 
     e.btnAudioToggle?.addEventListener('click', () => {
@@ -472,6 +496,12 @@ export class HUD {
     }
     if (this._isTyping()) return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+
+    if (ev.code === 'F3') {
+      ev.preventDefault();
+      if (!ev.repeat) this.toggleFps();
+      return;
+    }
 
     if (ev.code === 'F1' || ev.key === 'F1' || ev.key === '?') {
       ev.preventDefault();

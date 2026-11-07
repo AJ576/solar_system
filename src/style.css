@@ -1215,3 +1215,56 @@ canvas.threejs {
   color: var(--fg-3);
   letter-spacing: 0.04em;
 }
+
+/* ==========================================================================
+   FPS meter (toggle in Settings or F3)
+   ========================================================================== */
+
+.hud-fps {
+  position: absolute;
+  top: calc(var(--gutter) + 64px);
+  left: var(--gutter);
+  padding: 8px 10px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(10, 13, 19, 0.55);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  min-width: 132px;
+}
+
+.hud-fps__row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.hud-fps__value {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+  color: #7fd49a;
+}
+
+.hud-fps[data-level='ok'] .hud-fps__value { color: var(--accent); }
+.hud-fps[data-level='bad'] .hud-fps__value { color: var(--warn); }
+
+.hud-fps__unit {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--fg-3);
+}
+
+.hud-fps__meta {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--fg-2);
+  white-space: nowrap;
+}
+
+.hud-fps__graph {
+  display: block;
+  margin-top: 6px;
+  width: 120px;
+  height: 28px;
+}
