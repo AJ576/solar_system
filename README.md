@@ -19,7 +19,7 @@ An interactive, playable 3D space exploration game built with Three.js and Vite.
   - Domain-warped continents with calibrated sea levels, continental shelves, and ridged mountain ranges along tectonic belts.
   - Distinct archetypes with tuned parameters: Ocean (Temperate, Tropical, Savanna, Alien), Desert (Rust, Dune Sea, Badlands), Ice (Glacial, Frozen Highlands, Nitrogen), Rocky (Barren, Volcanic, Iron, Toxic), and Moon (Lunar, Dusty, Icy, Sulfur).
   - Geological features: impact craters with central peaks, shield volcanoes with calderas, canyons, mesas, sand dunes, and flooded maria.
-  - Dynamic liquid surfaces: translucent water oceans with polar sea ice, emissive lava oceans, and glacial sheets.
+  - Dynamic liquid surfaces: view-dependent shallow water translucency revealing coastal seabeds, analytic wave perturbation with ripple shimmer, seamless shoreline blending, and biome-specific oceans (water, polar sea ice caps, and emissive lava).
   - Quadtree chunk streaming: cube faces subdivide into level-of-detail (LOD) nodes down to ~4 m vertex spacing on foot, with Web Worker generation, skirt geometry to seal cracks, and horizon culling.
   - Swept-sphere surface collision and altitude queries keep ships and walking avatars grounded.
 
@@ -38,10 +38,11 @@ An interactive, playable 3D space exploration game built with Three.js and Vite.
   - Manual landing via `G` when within 300 m and under 500 m/s; engines shut down and the craft parks solidly in the planet's rotating frame.
   - Atmospheric scattering and sky illumination tinted by atmospheric composition, warmer at twilight, and scaling with atmospheric density.
   - Switchable lights (`N`): high-intensity starfighter headlight in flight, or a 100 m personal lantern on foot.
-  - First-person walking (`F`) with WASD, sprinting (`Shift`), jumping (`Space`), gravity scaled to planetary mass, and swimming in water oceans.
+  - First-person walking (`F`) with WASD, sprinting (`Shift`), jumping (`Space`), planetary mass-scaled gravity, and swimming in water oceans with buoyant damping and surface bobbing.
 
 - **Cinematic Photo Mode**:
   - Free-flight 6DOF camera decoupled from the ship and player avatar (`P` or HUD camera icon).
+  - Automatically disables planetary horizon culling on enter (and restores on exit) so the decoupled free camera can orbit and observe all planet faces without missing geometry.
   - Full movement controls (WASD, Space/C vertical, Q/E Dutch roll, Shift speed boost).
   - Adjustable field of view (`[` / `]` or mouse wheel) and exposure levels (`-` / `=`).
   - Pauses orbital motion and flight physics for pristine framing with the HUD automatically hidden.
@@ -227,4 +228,4 @@ All internal coordinates operate at **1 unit = 100 meters** (the HUD automatical
 - **Stars**: Radius 4,500–14,000 u (450–1,400 km).
 - **Orbits**: First planet located at ~3.5 star radii + 8,000 u; interplanetary spacing ranges from 18,000 to 36,000 u. Systems span roughly 100,000 to 300,000 u across.
 - **Speeds**: Sublight flight up to 20 u/s (2 km/s); afterburner boost up to 70 u/s (7 km/s); cruise drive up to 40,000 u/s (4,000 km/s).
-- **Camera Depth**: Logarithmic depth buffer rendering objects from near 0.004 u (40 cm) to far 4,000,000 u (400,000 km).
+- **Camera Depth**: Logarithmic depth buffer rendering objects from near 0.001 u (10 cm) to far 4,000,000 u (400,000 km) for clean first-person inspection near terrain and water surfaces.
