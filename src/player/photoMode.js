@@ -241,6 +241,8 @@ export class PhotoMode {
 
   enter() {
     this.isActive = true;
+    // Show terrain hidden behind the horizon: the free camera can look anywhere
+    this.game.setTerrainHorizonCulling?.(false);
     this.isUiHidden = false;
 
     // Save camera state
@@ -277,6 +279,7 @@ export class PhotoMode {
 
   exit() {
     this.isActive = false;
+    this.game.setTerrainHorizonCulling?.(true);
     this.overlay.style.display = 'none';
 
     // Restore gameplay HUD

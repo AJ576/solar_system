@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { applyCelestialShadows } from '../visuals/shadows.js';
 
 // Cheap 3D value noise shared by the terrain and lava shaders
+// Radius (units) of the on-foot water effects around the camera (1 unit = 100 m)
+// Translucent at player's feet (< 2.5 m), smoothly transitions to 100% opaque by 8 m
+const WATER_FX_NEAR = 0.025;
+const WATER_FX_FAR = 0.08;
+
 const GLSL_VALUE_NOISE = /* glsl */`
   float tnHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
   float tnNoise(vec3 p) {
@@ -72,9 +77,16 @@ export function createTerrainMaterial(profile) {
       vec3 tp = vTerrainLocalPos;
       float camDist = length(vViewPosition);
       float tex = (tnNoise(tp * 0.08) - 0.5) * 0.14;
-      tex += (tnNoise(tp * 0.9) - 0.5) * 0.12 * (1.0 - smoothstep(15.0, 60.0, camDist));
-      tex += (tnNoise(tp * 9.0) - 0.5) * 0.12 * (1.0 - smoothstep(1.5, 6.0, camDist));
-      tex += (tnNoise(tp * 80.0) - 0.5) * 0.10 * (1.0 - smoothstep(0.15, 0.6, camDist));
+      // Finer octaves only run where they are visible (each one is 8 hashes per pixel)
+      if (camDist < 60.0) {
+        tex += (tnNoise(tp * 0.9) - 0.5) * 0.12 * (1.0 - smoothstep(15.0, 60.0, camDist));
+        if (camDist < 6.0) {
+          tex += (tnNoise(tp * 9.0) - 0.5) * 0.12 * (1.0 - smoothstep(1.5, 6.0, camDist));
+          if (camDist < 0.6) {
+            tex += (tnNoise(tp * 80.0) - 0.5) * 0.10 * (1.0 - smoothstep(0.15, 0.6, camDist));
+          }
+        }
+      }
       float strata = sin((length(tp) - uPlanetRadius) * uStrataFreq) * uStrata;
       diffuseColor.rgb = clamp(diffuseColor.rgb * (1.0 + tex + strata), 0.0, 1.0);
       `
@@ -110,14 +122,110 @@ export function createLiquidMaterial(profile) {
   if (!profile?.liquid || (profile.seaSurface !== 'water' && profile.seaSurface !== 'lava')) return null;
 
   if (profile.seaSurface === 'water') {
-    // Translucent so the shallow seabed colors show through near coasts
+    // Water material: solid and opaque everywhere by default, with depth write enabled
+    // so atmosphere and sky never leak through. Polygon offset avoids coastline z-fighting.
     const mat = new THREE.MeshStandardMaterial({
       color: profile.liquid.color,
-      roughness: 0.16,
-      metalness: 0.0,
+      roughness: 0.14,
+      metalness: 0.02,
       transparent: true,
-      opacity: profile.liquid.opacity ?? 0.8
+      opacity: 1.0,
+      depthWrite: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1.0,
+      polygonOffsetUnits: -4.0,
+      side: THREE.FrontSide
     });
+
+    const uniforms = {
+      uChunkOffset: { value: new THREE.Vector3() },
+      uTime: { value: 0 },
+      // 1 when the camera is at walking altitude, fades to 0 by ~12 m up
+      uOnFoot: { value: 0 }
+    };
+    mat.userData.terrainUniforms = uniforms;
+
+    // Translucency and gentle wave normals only exist in a small bubble around the camera (< 8 m):
+    // full effect at player's feet (< 2.5 m), smoothly transitions to 100% opaque by 8 m.
+    // Beyond that, the water is completely solid and opaque, preventing any see-through planet artifacts.
+    const waterGlsl = `
+      uniform float uTime;
+      uniform float uOnFoot;
+      varying vec3 vLiquidLocalPos;
+      float waterFx(float camDist) {
+        return uOnFoot * (1.0 - smoothstep(${WATER_FX_NEAR.toFixed(3)}, ${WATER_FX_FAR.toFixed(3)}, camDist));
+      }
+    `;
+
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+
+      shader.vertexShader = `
+        uniform vec3 uChunkOffset;
+        varying vec3 vLiquidLocalPos;
+        ${shader.vertexShader}
+      `.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vLiquidLocalPos = position + uChunkOffset;
+        `
+      );
+
+      shader.fragmentShader = `
+        ${waterGlsl}
+        ${shader.fragmentShader}
+      `.replace(
+        '#include <color_fragment>',
+        `
+        #include <color_fragment>
+        float camDist = length(vViewPosition);
+        float waterFxAmt = uOnFoot > 0.001 ? waterFx(camDist) : 0.0;
+        if (waterFxAmt > 0.001) {
+          // Fresnel factor: looking straight down is see-through, grazing angles reflect
+          float fresnel = pow(1.0 - max(0.0, dot(normalize(vNormal), normalize(vViewPosition))), 2.5);
+
+          // Analytic low-frequency wave phases (smooth, zero coordinate jitter)
+          float t = uTime * 2.0;
+          float p1 = vLiquidLocalPos.x * 16.0 + vLiquidLocalPos.z * 12.0 + t;
+          float p2 = -vLiquidLocalPos.x * 11.0 + vLiquidLocalPos.z * 15.0 - t * 1.3;
+          float waveShimmer = (sin(p1) + sin(p2)) * 0.025;
+
+          // Water tint highlight near shore
+          vec3 waterTint = diffuseColor.rgb * 1.25 + vec3(0.02, 0.07, 0.10);
+          diffuseColor.rgb = mix(diffuseColor.rgb, clamp(waterTint + waveShimmer, 0.0, 1.0), waterFxAmt * 0.5);
+
+          // Translucency: ~0.42 looking down so the seabed shows, ~0.88 at grazing angles
+          float downAlpha = 0.42;
+          float footAlpha = mix(downAlpha, 0.88, fresnel);
+
+          // Blend with distance: translucent right at player's feet, 100% opaque beyond WATER_FX_FAR
+          diffuseColor.a = mix(1.0, footAlpha, waterFxAmt);
+        } else {
+          // Beyond the near bubble, ocean is 100% solid and opaque everywhere
+          diffuseColor.a = 1.0;
+        }
+        `
+      ).replace(
+        '#include <normal_fragment_maps>',
+        `
+        #include <normal_fragment_maps>
+        if (waterFxAmt > 0.001) {
+          float t = uTime * 2.0;
+          float p1 = vLiquidLocalPos.x * 16.0 + vLiquidLocalPos.z * 12.0 + t;
+          float p2 = -vLiquidLocalPos.x * 11.0 + vLiquidLocalPos.z * 15.0 - t * 1.3;
+          // Exact analytic cosine derivatives: mathematically smooth, zero dFdx/dFdy aliasing or flickering
+          vec3 slope = vec3(
+            (16.0 * cos(p1) - 11.0 * cos(p2)) * 0.0012,
+            0.0,
+            (12.0 * cos(p1) + 15.0 * cos(p2)) * 0.0012
+          );
+          normal = normalize(normal - slope * waterFxAmt);
+        }
+        `
+      );
+    };
+
     applyCelestialShadows(mat);
     return mat;
   }

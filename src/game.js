@@ -34,7 +34,7 @@ export class Game {
 
     // 1. Scene, camera, renderer. 1 u = 100 m; systems span a few hundred thousand units.
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.004, 4e6);
+    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.001, 4e6);
 
     this.quality = new QualitySettings();
 
@@ -205,6 +205,16 @@ export class Game {
       for (let m = 0; m < moons.length; m++) {
         if (moons[m].terrainLOD) moons[m].terrainLOD.update(camPos);
       }
+    }
+  }
+
+  /** Photo mode turns this off so a free camera never sees missing far-side chunks. */
+  setTerrainHorizonCulling(enabled) {
+    const entries = this.systemMeshes?.planetEntries;
+    if (!entries) return;
+    for (const pe of entries) {
+      pe.terrainLOD?.setHorizonCulling(enabled);
+      for (const m of pe.moons || []) m.terrainLOD?.setHorizonCulling(enabled);
     }
   }
 

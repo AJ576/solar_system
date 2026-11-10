@@ -30,6 +30,7 @@ export class OnFootController {
     this.pitch = 0;
     this.grounded = false;
     this.swimming = false;
+    this._deepWater = false;
     this.inLava = false;
 
     this.keys = { forward: false, back: false, left: false, right: false, run: false, jump: false };
@@ -153,11 +154,13 @@ export class OnFootController {
     const p = this.body.terrainProfile;
     const h = getTerrainHeight(dir, p.seedNum, p);
     let floor = h;
-    this.swimming = false;
+    // Deep water under this spot. Whether we are actually *in* it (vs. jumping above it)
+    // is decided in update() from the player's height.
+    this._deepWater = false;
     this.inLava = false;
     if (h < 0 && p.seaSurface === 'water') {
       floor = Math.max(h, -PLAYER_EYE_HEIGHT * 0.85);
-      this.swimming = h < -PLAYER_EYE_HEIGHT * 0.5;
+      this._deepWater = h < -PLAYER_EYE_HEIGHT * 0.5;
     } else if (h < 0 && p.seaSurface === 'lava') {
       floor = 0;
       this.inLava = true;
@@ -217,8 +220,11 @@ export class OnFootController {
       vUp -= this.gravity * dt;
     }
     const wasGrounded = this.grounded;
-    if (k.jump && (this.grounded || this.swimming)) {
-      vUp = PLAYER_JUMP_SPEED;
+    // Only possible while touching the ground or floating at the water surface, so
+    // holding Space gives repeated hops/bobs, never a climb into the sky
+    if (k.jump && this.grounded) {
+      vUp = this.swimming ? PLAYER_JUMP_SPEED * 0.6 : PLAYER_JUMP_SPEED;
+      this.swimming = false;
       this.grounded = false;
       this.onJump?.();
     }
@@ -242,6 +248,8 @@ export class OnFootController {
     } else {
       this.grounded = false;
     }
+    // Floating at the surface of deep water (the water surface acts as our "ground")
+    this.swimming = this.grounded && this._deepWater;
 
     this._resolveObstacle(newUp);
   }

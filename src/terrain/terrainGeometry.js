@@ -219,7 +219,10 @@ export function buildChunkData({
       }
     }
     if (skirtDepth > 0) {
-      const liquidSkirt = Math.min(skirtDepth, radius * 0.002);
+      // The sea is a smooth sphere, so the only cracks to hide are the chord sag between
+      // LOD levels. A deeper skirt shows through the translucent water as a blue seam.
+      const spacing = (size / 2) * (Math.PI / 2) * radius / N;
+      const liquidSkirt = Math.min(skirtDepth, radius * 0.002, (spacing * spacing) / radius);
       for (let e = 0; e < 4; e++) {
         for (let t = 0; t <= N; t++) {
           const src = edgeIndex(e, t);

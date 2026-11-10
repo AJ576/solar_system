@@ -153,7 +153,10 @@ export class PlanetTerrain {
     this._camDir = new THREE.Vector3();
     this._dir = new THREE.Vector3();
     this._requests = [];
-    this.stats = { chunks: 0, visible: 0 };
+    this.stats = { chunks: 0, visible: 0, culled: 0 };
+    // Hide chunks that are entirely behind the planet's curve (turned off for photo mode,
+    // where the camera moves without the terrain being updated)
+    this.horizonCulling = true;
 
     this.roots = CUBE_FACES.map((_, f) => this._makeNode(f, -1, -1, 2, 0));
     for (const root of this.roots) {
@@ -223,6 +226,7 @@ export class PlanetTerrain {
       liquid.visible = false;
       liquid.matrixAutoUpdate = false;
       liquid.updateMatrix();
+      liquid.renderOrder = 1;
       bindTerrainChunk(liquid);
       this.group.add(liquid);
       node.liquid = liquid;
@@ -256,12 +260,18 @@ export class PlanetTerrain {
   _updateNode(node, cam) {
     const d = cam.distanceTo(node.center);
     const splitDist = node.edge * (this.splitFactor || SPLIT_FACTOR) * (node.children ? MERGE_HYSTERESIS : 1);
-    const wantSplit = node.level < this.maxDepth && d < splitDist && !this._beyondHorizon(node);
+    const beyondHorizon = this._beyondHorizon(node);
+    const wantSplit = node.level < this.maxDepth && d < splitDist && !beyondHorizon;
 
     if (!wantSplit) {
       if (node.children) {
         for (const c of node.children) this._disposeNode(c);
         node.children = null;
+      }
+      if (beyondHorizon && this._cullActive) {
+        this._setVisible(node, false);
+        this.stats.culled++;
+        return;
       }
       this._setVisible(node, true);
       this.stats.visible++;
@@ -317,6 +327,7 @@ export class PlanetTerrain {
    */
   update(cameraPosition) {
     if (this.isDisposed) return;
+    (this._lastCamWorld ||= new THREE.Vector3()).copy(cameraPosition);
     this.mesh.updateWorldMatrix(true, false);
     this._camLocal.copy(cameraPosition);
     this.mesh.worldToLocal(this._camLocal);
@@ -324,14 +335,29 @@ export class PlanetTerrain {
 
     // Distance gating: if camera is far from the body (root chunks only split within ~3.5 * radius),
     // and the quadtree is already collapsed to its root nodes, skip traversal entirely.
-    if (camDist > this.radius * 4.5 && this._isCollapsed) {
+    if (camDist > this.radius * 4.5 && this._isCollapsed && this.stats.culled === 0) {
       return;
     }
 
+    if (this.liquidMaterial?.userData?.terrainUniforms) {
+      const u = this.liquidMaterial.userData.terrainUniforms;
+      if (u.uTime) u.uTime.value = performance.now() * 0.001;
+      if (u.uOnFoot) {
+        const alt = Math.max(0, camDist - this.radius);
+        // Fully on-foot effect below 0.02 units (~walking altitude), fades smoothly up to 0.12 units
+        const factor = 1.0 - Math.min(1.0, Math.max(0.0, (alt - 0.02) / 0.10));
+        u.uOnFoot.value = factor;
+      }
+    }
+
     this._camDir.copy(this._camLocal).normalize();
+    // From far away the far-side roots are only a handful of coarse chunks; culling there
+    // would just risk stale hidden faces once the update is skipped
+    this._cullActive = this.horizonCulling && camDist < this.radius * 4;
 
     this._requests.length = 0;
     this.stats.visible = 0;
+    this.stats.culled = 0;
     for (const root of this.roots) this._updateNode(root, this._camLocal);
 
     this._isCollapsed = !this.roots.some((r) => r.children !== null);
@@ -357,6 +383,19 @@ export class PlanetTerrain {
         if (performance.now() - start > SYNC_BUDGET_MS) break;
       }
     }
+  }
+
+  /**
+   * Turns horizon culling on/off and immediately re-applies chunk visibility for the
+   * last camera position (e.g. on entering photo mode, so the free camera can see
+   * everything that was hidden behind the curve).
+   */
+  setHorizonCulling(enabled) {
+    if (this.horizonCulling === enabled || this.isDisposed) return;
+    this.horizonCulling = enabled;
+    if (!this._lastCamWorld) return;
+    this._isCollapsed = false; // force a traversal
+    this.update(this._lastCamWorld);
   }
 
   /**
