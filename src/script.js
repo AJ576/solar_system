@@ -1,4 +1,7 @@
+import { inject } from '@vercel/analytics';
 import { Game } from './game.js';
+
+inject();
 
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
